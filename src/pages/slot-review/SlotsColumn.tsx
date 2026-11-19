@@ -1,6 +1,6 @@
 import { Box, Button, Link } from '@mui/material';
-import { useEffect, useRef, useState } from 'react';
-import type { NearFutureItem, OpeningView } from '@/domain/board';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { placeCheck, type NearFutureItem, type OpeningView } from '@/domain/board';
 import { fmtShort } from '@/domain/dates';
 import { labelFor, openingOwnName, ordinal } from '@/domain/names';
 import { useStore } from '@/state/store';
@@ -9,16 +9,21 @@ import { Mono, Overline, ToneChip, useTone, type ToneName } from '@/components/u
 import { CANDIDATE, DECISION } from '@/components/statusMeta';
 import { DesignNote } from '@/notes/DesignNote';
 import { useBoardUi } from './boardUi';
-import { CardBox, CardButton, Column, Muted, Row, Segmented } from './parts';
+import { CardBox, CardButton, clampSx, Column, GroupLabel, ListFrame, Muted, ReduceBar, Row, Segmented } from './parts';
+import { useBoardActions } from './BoardActions';
+import { isDragging, useDrag } from './dnd';
+import { openingsForPatient, useShowAll } from './reduce';
 
 export function SlotsColumn() {
   const { state, board } = useStore();
   const ui = useBoardUi();
+  const [showAll, setShowAll] = useShowAll(ui.selection);
   const ref = useRef<HTMLElement>(null);
   const sel = ui.selection;
+  const list = ui.view === 'list';
 
   useEffect(() => {
-    if (!ui.wide || !sel) return;
+    if (!ui.wide || !sel || isDragging()) return;
     const target =
       sel.kind === 'opening'
         ? ref.current?.querySelector(`[data-oid="${sel.id}"]`)
@@ -27,6 +32,68 @@ export function SlotsColumn() {
   }, [sel, ui.wide, ui.slotsTab]);
 
   const openOpenings = board.openings.filter((o) => o.opening.state === 'open');
+
+  // A selected patient narrows Slots to what applies to them (SR6).
+  const forPatient = sel?.kind === 'patient' ? openingsForPatient(board, sel.id) : null;
+  const narrow = forPatient && !showAll ? forPatient : null;
+  const who = sel?.kind === 'patient' ? ui.nameOf(sel.id) : '';
+  const waitsFor = (n: NearFutureItem) => sel?.kind === 'patient' && (n.waiting.some((w) => w.patientId === sel.id) || n.heldForPatientId === sel.id);
+  const soonFor = board.nearFuture.filter(waitsFor);
+  const soon = sel?.kind === 'patient' && !showAll ? soonFor : board.nearFuture;
+
+  const decision = sel?.kind === 'patient' ? board.patientById[sel.id]?.decision : undefined;
+  const theirsTitle = decision?.kind === 'accepted' ? 'Accepted' : decision?.kind === 'pre_screening' ? 'Pre-screening' : 'Proposed';
+
+  let now: ReactNode;
+  if (narrow) {
+    const groups = [
+      { title: theirsTitle, ids: narrow.theirs },
+      { title: 'On their queue', ids: narrow.queued },
+      { title: 'Also fits, not queued', ids: narrow.fits },
+    ];
+    now = (
+      <>
+        {narrow.all.length === 0 ? <Muted>No open slot fits {who} right now. Near future shows what may open.</Muted> : null}
+        {groups.map((g) =>
+          g.ids.length ? (
+            <Box key={g.title} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <GroupLabel>
+                {g.title} · {g.ids.length}
+              </GroupLabel>
+              <ListFrame list={list}>
+                {g.ids.map((oid) => (board.openingById[oid] ? <OpeningCard key={oid} ov={board.openingById[oid]} showTrial narrowed /> : null))}
+              </ListFrame>
+            </Box>
+          ) : null,
+        )}
+      </>
+    );
+  } else {
+    now = state.trials.map((trial) => {
+      const ovs = openOpenings.filter((o) => o.trial.id === trial.id);
+      if (!ovs.length) return null;
+      const open = ovs.reduce((n, o) => n + o.openNow, 0);
+      return (
+        <Box key={trial.id} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <Box sx={{ mt: 0.75, px: 0.25 }}>
+            <Box component="span" sx={{ fontWeight: 700, fontSize: 14.5 }}>
+              {trial.short}
+            </Box>
+            <Mono sx={{ ml: 0.75, color: 'text.secondary', fontSize: 12 }}>{trial.nct}</Mono>
+            <Muted size={12}>
+              {' '}
+              · {trial.phase} · {open} open
+            </Muted>
+          </Box>
+          <ListFrame list={list}>
+            {ovs.map((ov) => (
+              <OpeningCard key={ov.opening.id} ov={ov} />
+            ))}
+          </ListFrame>
+        </Box>
+      );
+    });
+  }
 
   return (
     <Column
@@ -37,6 +104,7 @@ export function SlotsColumn() {
           Slots
           <DesignNote id="A1" />
           <DesignNote id="A2" />
+          <DesignNote id="SR6" />
         </>
       }
       sub="Open trial slots, by opening"
@@ -53,37 +121,25 @@ export function SlotsColumn() {
       }
     >
       {ui.slotsTab === 'now' ? (
-        state.trials.map((trial) => {
-          const ovs = openOpenings.filter((o) => o.trial.id === trial.id);
-          if (!ovs.length) return null;
-          const open = ovs.reduce((n, o) => n + o.openNow, 0);
-          return (
-            <Box key={trial.id} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <Box sx={{ mt: 0.75, px: 0.25 }}>
-                <Box component="span" sx={{ fontWeight: 700, fontSize: 14.5 }}>
-                  {trial.short}
-                </Box>
-                <Mono sx={{ ml: 0.75, color: 'text.secondary', fontSize: 12 }}>{trial.nct}</Mono>
-                <Muted size={12}>
-                  {' '}
-                  · {trial.phase} · {open} open
-                </Muted>
-              </Box>
-              {ovs.map((ov) => (
-                <OpeningCard key={ov.opening.id} ov={ov} />
-              ))}
-            </Box>
-          );
-        })
+        <>
+          {forPatient ? <ReduceBar shown={forPatient.all.length} total={openOpenings.length} noun="openings" who={who} all={showAll} onToggle={setShowAll} /> : null}
+          {now}
+        </>
       ) : (
         <>
+          {sel?.kind === 'patient' ? (
+            <ReduceBar shown={soonFor.length} total={board.nearFuture.length} noun="near-future slots" who={who} all={showAll} onToggle={setShowAll} />
+          ) : null}
           <Row sx={{ px: 0.25 }}>
             <Muted size={12.5}>Openings on hold, and slots that may come back, with who is waiting for them.</Muted>
             <DesignNote id="SR4" />
           </Row>
-          {board.nearFuture.map((n) => (
-            <NearFutureCard key={n.id} item={n} />
-          ))}
+          {sel?.kind === 'patient' && !showAll && soonFor.length === 0 ? <Muted>{who} is not waiting for any of them.</Muted> : null}
+          <ListFrame list={list}>
+            {soon.map((n) => (
+              <NearFutureCard key={n.id} item={n} narrowed={sel?.kind === 'patient' && !showAll} />
+            ))}
+          </ListFrame>
         </>
       )}
     </Column>
@@ -106,67 +162,150 @@ function countsLine(ov: OpeningView): string {
   return held ? `${line} · ${held}` : line;
 }
 
-function OpeningCard({ ov }: { ov: OpeningView }) {
+function OpeningCard({ ov, showTrial = false, narrowed = false }: { ov: OpeningView; showTrial?: boolean; narrowed?: boolean }) {
   const { board } = useStore();
   const ui = useBoardUi();
+  const drag = useDrag();
+  const act = useBoardActions();
+  const green = useTone('green');
+  const red = useTone('red');
   const sel = ui.selection;
   const o = ov.opening;
   const selected = sel?.kind === 'opening' && sel.id === o.id;
+  const view = ui.view;
+  const name = showTrial ? ov.short : openingOwnName(o);
 
-  // Patient selected: say what this opening is for them, dim the rest (SR2).
+  // Patient selected: say what this opening is for them (SR2). Narrowed, nothing is dimmed (SR6).
   let pill: { label: string; tone: ToneName } | undefined;
   let dim = false;
   if (sel?.kind === 'patient') {
     const pv = board.patientById[sel.id];
-    const name = ui.nameOf(sel.id);
+    const pname = ui.nameOf(sel.id);
     const d = pv?.decision;
     const cand = ov.candidates.find((c) => c.patientId === sel.id);
     if (d && d.openingId === o.id && d.kind !== 'dismissed') {
-      const label = d.kind === 'proposed' ? `Proposed for ${name}` : d.kind === 'accepted' ? `Accepted for ${name}` : `Pre-screening: ${name}`;
+      const label = d.kind === 'proposed' ? `Proposed for ${pname}` : d.kind === 'accepted' ? `Accepted for ${pname}` : `Pre-screening: ${pname}`;
       pill = { label, tone: DECISION[d.kind].tone };
     } else if (cand) {
-      if (cand.status === 'dismissed') pill = { label: `Dismissed for ${name}`, tone: 'grey' };
+      if (cand.status === 'dismissed') pill = { label: `Dismissed for ${pname}`, tone: 'grey' };
       else if (cand.status === 'not_eligible') pill = { label: 'Queued, not eligible', tone: 'red' };
       else if (ov.openNow === 0) pill = { label: 'Queued, no open slot', tone: 'amber' };
       else if (cand.status === 'reserve') pill = { label: `Queued · reserve #${cand.rank}`, tone: 'amber' };
       else if (cand.status === 'placed_elsewhere') pill = { label: 'Queued · placed elsewhere', tone: 'grey' };
     } else if (pv?.possibleNow.includes(o.id)) {
-      pill = { label: `Possible slot for ${name} · not queued`, tone: 'teal' };
+      pill = { label: narrowed ? 'Fits, not queued' : `Possible slot for ${pname} · not queued`, tone: 'teal' };
     }
-    if (!pill) dim = true;
+    if (!pill) dim = !narrowed;
   }
 
-  const reserve = ov.candidates.filter((c) => c.status === 'reserve').length;
+  // While a patient is dragged, every slot says whether it can take them (SR5).
+  const check = drag.patientId ? placeCheck(board, drag.patientId, o.id) : null;
+  const over = drag.overId === o.id;
+  const dropSx = check
+    ? check.ok
+      ? { outline: `2px ${over ? 'solid' : 'dashed'} ${green.solid}`, outlineOffset: 2, borderRadius: 1.5, bgcolor: over ? green.bg : undefined }
+      : over
+        ? { outline: `2px solid ${red.solid}`, outlineOffset: 2, borderRadius: 1.5 }
+        : { opacity: 0.45 }
+    : {};
 
-  return (
-    <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-      <CardButton selected={selected} dim={dim} highlight={!!pill} onClick={() => ui.selectOpening(o.id)} data={{ 'data-oid': o.id, 'data-bright': pill ? 'true' : 'false' }}>
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Box sx={{ fontWeight: 600, fontSize: 14 }}>{openingOwnName(o)}</Box>
-              <Muted size={12}>{o.population}</Muted>
+  // "Place here": the same as dropping the selected patient here, from the keyboard or a touch screen.
+  const place = sel?.kind === 'patient' && !drag.patientId ? placeCheck(board, sel.id, o.id) : null;
+  const placeButton =
+    place?.ok && sel ? (
+      <Button
+        size="small"
+        variant={place.kind === 'accept' ? 'contained' : 'outlined'}
+        onClick={() => act.tryPlace(sel.id, o.id)}
+        aria-label={`${place.kind === 'accept' ? 'Accept' : 'Place'} ${ui.nameOf(sel.id)} in ${ov.short}`}
+        sx={{ py: 0, minHeight: 26, whiteSpace: 'nowrap', flexShrink: 0 }}
+      >
+        {place.kind === 'accept' ? 'Accept…' : 'Place here…'}
+      </Button>
+    ) : null;
+
+  const reserve = ov.candidates.filter((c) => c.status === 'reserve').length;
+  const pillChip = pill ? <ToneChip tone={pill.tone} variant={pill.tone === 'teal' ? 'outline' : 'solid'} label={pill.label} size="tiny" /> : null;
+  const cardProps = {
+    selected,
+    dim,
+    highlight: !!pill && !narrowed,
+    onClick: () => ui.selectOpening(o.id),
+    data: { 'data-oid': o.id, 'data-bright': pill ? 'true' : 'false' },
+  };
+
+  if (view === 'list') {
+    return (
+      <Box
+        data-drop-oid={o.id}
+        sx={[
+          { display: 'flex', flexDirection: 'column', borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } },
+          dropSx,
+        ]}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, pr: placeButton || pill ? 1 : 0, bgcolor: 'background.paper' }}>
+          <CardButton {...cardProps} variant="row" sx={{ borderBottom: 0, flex: 1, minWidth: 0 }}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', columnGap: 1 }}>
+              <Box sx={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 13.5 }}>
+                <Box component="span" sx={{ fontWeight: 600 }}>
+                  {name}
+                </Box>
+                <Muted size={12}> · {countsLine(ov)}</Muted>
+              </Box>
+              <Box sx={{ fontSize: 13, fontWeight: 700, color: ov.openNow ? 'text.primary' : 'text.secondary' }}>{ov.openNow}</Box>
             </Box>
-            <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
-              <Box sx={{ fontSize: 20, fontWeight: 700, lineHeight: 1.1, color: ov.openNow ? 'text.primary' : 'text.secondary' }}>{ov.openNow}</Box>
-              <Muted size={11}>open</Muted>
-            </Box>
-          </Box>
-          <Box sx={{ fontSize: 12.5 }}>{countsLine(ov)}</Box>
-          <Row>
-            {ov.candidates.length ? <ToneChip tone="grey" label={`${ov.candidates.length} queued`} size="tiny" /> : null}
-            {reserve ? <ToneChip tone="amber" label={`${reserve} in reserve`} size="tiny" /> : null}
-            {ov.fitNotQueued.length ? <ToneChip tone="teal" variant="outline" label={`${ov.fitNotQueued.length} fit, not queued`} size="tiny" /> : null}
-            {ov.watching.length ? <ToneChip tone="blue" variant="outline" label={`${ov.watching.length} watching`} size="tiny" /> : null}
-            {ov.blocks.length ? <ToneChip tone="red" label={`blocks ${ov.blocks.length}`} size="tiny" /> : null}
-          </Row>
-          {pill ? (
-            <Row sx={{ mt: 0.25 }}>
-              <ToneChip tone={pill.tone} variant={pill.tone === 'teal' ? 'outline' : 'solid'} label={pill.label} size="tiny" />
-            </Row>
-          ) : null}
+          </CardButton>
+          {pillChip}
+          {placeButton}
         </Box>
+        {selected ? <OpeningDetail ov={ov} /> : null}
+      </Box>
+    );
+  }
+
+  const compact = view === 'compact';
+  return (
+    <Box data-drop-oid={o.id} sx={[{ display: 'flex', flexDirection: 'column' }, dropSx]}>
+      <CardButton {...cardProps} dense={compact}>
+        {compact ? (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
+              <Box sx={{ flex: 1, minWidth: 0, fontWeight: 600, fontSize: 13.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</Box>
+              <Box sx={{ fontSize: 13, fontWeight: 700, color: ov.openNow ? 'text.primary' : 'text.secondary', whiteSpace: 'nowrap' }}>{ov.openNow} open</Box>
+            </Box>
+            <Box sx={{ fontSize: 12, color: 'text.secondary', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{countsLine(ov)}</Box>
+            {pillChip || ov.blocks.length ? (
+              <Row>
+                {ov.blocks.length ? <ToneChip tone="red" label={`blocks ${ov.blocks.length}`} size="tiny" /> : null}
+                {pillChip}
+              </Row>
+            ) : null}
+          </Box>
+        ) : (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Box sx={{ fontWeight: 600, fontSize: 14 }}>{name}</Box>
+                <Muted size={12}>{o.population}</Muted>
+              </Box>
+              <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
+                <Box sx={{ fontSize: 20, fontWeight: 700, lineHeight: 1.1, color: ov.openNow ? 'text.primary' : 'text.secondary' }}>{ov.openNow}</Box>
+                <Muted size={11}>open</Muted>
+              </Box>
+            </Box>
+            <Box sx={{ fontSize: 12.5 }}>{countsLine(ov)}</Box>
+            <Row>
+              {ov.candidates.length ? <ToneChip tone="grey" label={`${ov.candidates.length} queued`} size="tiny" /> : null}
+              {reserve ? <ToneChip tone="amber" label={`${reserve} in reserve`} size="tiny" /> : null}
+              {ov.fitNotQueued.length ? <ToneChip tone="teal" variant="outline" label={`${ov.fitNotQueued.length} fit, not queued`} size="tiny" /> : null}
+              {ov.watching.length ? <ToneChip tone="blue" variant="outline" label={`${ov.watching.length} watching`} size="tiny" /> : null}
+              {ov.blocks.length ? <ToneChip tone="red" label={`blocks ${ov.blocks.length}`} size="tiny" /> : null}
+            </Row>
+            {pillChip ? <Row sx={{ mt: 0.25 }}>{pillChip}</Row> : null}
+          </Box>
+        )}
       </CardButton>
+      {placeButton ? <Row sx={{ justifyContent: 'flex-end', mt: 0.5 }}>{placeButton}</Row> : null}
       {selected ? <OpeningDetail ov={ov} /> : null}
     </Box>
   );
@@ -352,17 +491,18 @@ function RankDot({ n }: { n?: number }) {
 
 const NF_CHIP: Record<NearFutureItem['kind'], ToneName> = { opens_on: 'amber', may_return: 'blue', no_date: 'grey' };
 
-function NearFutureCard({ item: n }: { item: NearFutureItem }) {
+function NearFutureCard({ item: n, narrowed }: { item: NearFutureItem; narrowed: boolean }) {
   const { state } = useStore();
   const ui = useBoardUi();
   const sel = ui.selection;
-  const waitsHere = sel?.kind === 'patient' && (n.waiting.some((w) => w.patientId === sel.id) || n.heldForPatientId === sel.id);
-  const dim = (sel?.kind === 'patient' && !waitsHere) || (sel?.kind === 'opening' && sel.id !== n.openingId);
+  const dense = ui.view !== 'cards';
+  const waitsHere = !narrowed && sel?.kind === 'patient' && (n.waiting.some((w) => w.patientId === sel.id) || n.heldForPatientId === sel.id);
+  const dim = (!narrowed && sel?.kind === 'patient' && !waitsHere) || (sel?.kind === 'opening' && sel.id !== n.openingId);
   const chip = n.kind === 'opens_on' ? `opens ${fmtShort(n.date!)}` : n.kind === 'may_return' ? `may come back ${fmtShort(n.date!)}` : 'no date set';
   const f = state.trials.find((t) => t.openings.some((o) => o.id === n.openingId));
 
   return (
-    <CardBox dim={dim} selected={!!waitsHere} data={{ 'data-bright': waitsHere ? 'true' : 'false' }}>
+    <CardBox dim={dim} selected={!!waitsHere} dense={dense} variant={ui.view === 'list' ? 'row' : 'card'} data={{ 'data-bright': waitsHere ? 'true' : 'false' }}>
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
           <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -373,7 +513,7 @@ function NearFutureCard({ item: n }: { item: NearFutureItem }) {
           </Box>
           <ToneChip tone={NF_CHIP[n.kind]} label={chip} size="tiny" />
         </Box>
-        <Muted>{n.note}</Muted>
+        <Muted sx={dense ? clampSx(1) : undefined}>{n.note}</Muted>
         {n.heldForPatientId ? <Box sx={{ fontSize: 12.5 }}>Held for {ui.nameOf(n.heldForPatientId)} until consent</Box> : null}
         <Box sx={{ fontSize: 12.5 }}>
           {n.waiting.length ? (

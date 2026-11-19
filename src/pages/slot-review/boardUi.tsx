@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { Pairing, Step, UserId } from '@/domain/types';
+import type { BoardView, Pairing, Step, UserId } from '@/domain/types';
 import { daysBetween, fmtWeekday, TODAY } from '@/domain/dates';
 import type { ToneName } from '@/components/ui';
 
@@ -13,7 +13,10 @@ export type Assigned = 'everyone' | UserId;
 
 export interface BoardUi {
   selection: Selection;
+  /** toggles: selecting the selected patient again clears the selection */
   selectPatient(id: string): void;
+  /** selects without toggling (drag start) */
+  focusPatient(id: string): void;
   selectOpening(id: string): void;
   clearSelection(): void;
   slotsTab: SlotsTab;
@@ -27,6 +30,8 @@ export interface BoardUi {
   mrnOf(patientId: string): string;
   /** three columns side by side (desktop) */
   wide: boolean;
+  /** SR7: Cards, Compact, List or Matrix */
+  view: BoardView;
 }
 
 export const BoardUiContext = createContext<BoardUi | null>(null);

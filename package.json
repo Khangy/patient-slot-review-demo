@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "build:single": "tsc --noEmit && vite build --mode single",
     "build:artifact": "tsc --noEmit && vite build --mode artifact && node scripts/make-artifact.mjs",
+    "build:pages": "npm run build:single && node scripts/encrypt-pages.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },

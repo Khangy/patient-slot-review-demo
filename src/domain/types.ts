@@ -218,6 +218,9 @@ export interface TrailEntry {
 
 export type DismissReason = 'patient_declined' | 'not_a_fit' | 'wrong_timing' | 'other';
 
+/** Why a patient was placed by hand, ahead of the optimizer's order (drag to a slot). */
+export type PlaceReason = 'clinical_urgency' | 'patient_preference' | 'pi_decision' | 'other';
+
 export interface Pairing {
   id: string;
   patientId: string;
@@ -230,6 +233,8 @@ export interface Pairing {
   dismissNote?: string;
   /** accepted: the slot returns if consent is not reached by this date */
   holdUntil?: string;
+  /** set when the team placed the patient by hand instead of accepting a proposal */
+  placedByHand?: { reason: PlaceReason; note?: string };
   steps: Step[];
   trail: TrailEntry[];
 }
@@ -253,6 +258,9 @@ export interface ActivityEntry {
 
 export type BoardNames = 'full' | 'meeting' | 'masked';
 
+/** How Patient Slot Review lays out: three columns of cards, compact cards, list rows, or a patients-by-slots matrix. */
+export type BoardView = 'cards' | 'compact' | 'list' | 'matrix';
+
 export interface Settings {
   viewingAs: UserId;
   /** Profile › Privacy "Always show patient PII" (board 02: keep as is) */
@@ -261,6 +269,8 @@ export interface Settings {
   boardNames: BoardNames;
   showDesignNotes: boolean;
   themeMode: 'light' | 'dark';
+  /** Patient Slot Review layout; missing in older saved states, read as 'cards' */
+  boardView?: BoardView;
 }
 
 export interface FeedbackAnswer {

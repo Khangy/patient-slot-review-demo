@@ -3,6 +3,7 @@ import {
   Button,
   ButtonBase,
   Link,
+  Paper,
   ListItemIcon,
   ListItemText,
   Menu,
@@ -17,21 +18,29 @@ import {
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import CheckIcon from '@mui/icons-material/Check';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import GridOnIcon from '@mui/icons-material/GridOn';
+import ViewAgendaOutlinedIcon from '@mui/icons-material/ViewAgendaOutlined';
+import ViewHeadlineIcon from '@mui/icons-material/ViewHeadline';
+import ViewListIcon from '@mui/icons-material/ViewList';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link as RouterLink, useSearchParams } from 'react-router';
-import type { BoardNames, UserId } from '@/domain/types';
+import type { BoardNames, BoardView, UserId } from '@/domain/types';
+import { placeCheck } from '@/domain/board';
 import { TEAM, SITE_NAME } from '@/domain/seed';
 import { fmtTime, fmtWeekday, TODAY } from '@/domain/dates';
 import { boardMrn, boardName, member } from '@/domain/names';
 import { useStore } from '@/state/store';
 import { useToast } from '@/components/Toast';
-import { PersonAvatar, useTone, type ToneName } from '@/components/ui';
+import { PersonAvatar, useTone, useTones, type ToneName } from '@/components/ui';
 import { DesignNote } from '@/notes/DesignNote';
 import { BoardUiContext, useBoardUi, type Assigned, type BoardUi, type DecisionsTab, type Selection, type SlotsTab } from './boardUi';
 import { PatientsColumn } from './PatientsColumn';
 import { SlotsColumn } from './SlotsColumn';
 import { DecisionsColumn } from './DecisionsColumn';
 import { ExportSummaryDialog } from './dialogs';
+import { MatrixView } from './MatrixView';
+import { BoardActionsProvider, useBoardActions } from './BoardActions';
+import { DragProvider } from './dnd';
 
 // Patient Slot Review (SR1-SR4): one board for the Thursday New Patient Meeting. Patients,
 // slots (now and near future) and the optimizer's decisions, connected by one selection.
@@ -87,6 +96,7 @@ export function SlotReviewPage() {
     () => ({
       selection,
       selectPatient: (id) => setParam(selection?.kind === 'patient' && selection.id === id ? { patient: null, opening: null } : { patient: id, opening: null }),
+      focusPatient: (id) => setParam({ patient: id, opening: null }),
       selectOpening: (id) =>
         setParam(selection?.kind === 'opening' && selection.id === id ? { patient: null, opening: null } : { opening: id, patient: null, slots: null }),
       clearSelection: () => setParam({ patient: null, opening: null }),
@@ -105,8 +115,9 @@ export function SlotReviewPage() {
         return p ? boardMrn(p, settings.boardNames, settings.showPii) : '';
       },
       wide,
+      view: settings.boardView ?? 'cards',
     }),
-    [selection?.kind, selection?.id, slotsTab, decisionsTab, assigned, board, settings.boardNames, settings.showPii, wide, setParam],
+    [selection?.kind, selection?.id, slotsTab, decisionsTab, assigned, board, settings.boardNames, settings.showPii, settings.boardView, wide, setParam],
   );
 
   useEffect(() => {
@@ -119,28 +130,83 @@ export function SlotReviewPage() {
 
   return (
     <BoardUiContext.Provider value={ui}>
-      <Box sx={{ px: { xs: 2, md: 3 }, py: { xs: 2, md: 2.5 }, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <BoardHeader />
-        <Tiles />
-        <SelectionBar />
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: 'repeat(3, minmax(0, 1fr))' },
-            gap: 2,
-            alignItems: 'start',
-          }}
-        >
-          <PatientsColumn />
-          <SlotsColumn />
-          <DecisionsColumn />
-        </Box>
-      </Box>
+      <BoardActionsProvider>
+        <Dragging>
+          <Box sx={{ px: { xs: 2, md: 3 }, py: { xs: 2, md: 2.5 }, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <BoardHeader />
+            <Tiles />
+            <SelectionBar />
+            {ui.view === 'matrix' ? (
+              <MatrixView />
+            ) : (
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: 'repeat(3, minmax(0, 1fr))' },
+                  gap: 2,
+                  alignItems: 'start',
+                }}
+              >
+                <PatientsColumn />
+                <SlotsColumn />
+                <DecisionsColumn />
+              </Box>
+            )}
+          </Box>
+        </Dragging>
+      </BoardActionsProvider>
     </BoardUiContext.Provider>
   );
 }
 
+// ── Drag a patient onto a slot (SR5) ────────────────────────────────────
+
+function Dragging({ children }: { children: ReactNode }) {
+  const ui = useBoardUi();
+  const act = useBoardActions();
+  return (
+    <DragProvider
+      onStart={(pid) => {
+        // the slot column narrows to this patient's slots while dragging (SR6)
+        ui.focusPatient(pid);
+        ui.setSlotsTab('now');
+      }}
+      onDrop={act.tryPlace}
+      renderGhost={(pid, oid) => <DragGhost patientId={pid} overId={oid} />}
+    >
+      {children}
+    </DragProvider>
+  );
+}
+
+/** Follows the pointer and says what letting go will do. */
+function DragGhost({ patientId, overId }: { patientId: string; overId: string | null }) {
+  const { board } = useStore();
+  const ui = useBoardUi();
+  const tones = useTones();
+  const check = overId ? placeCheck(board, patientId, overId) : null;
+  const where = overId ? board.openingById[overId]?.short : '';
+  const line = !check
+    ? { text: 'Drop on a slot · Esc to cancel', color: 'text.secondary' }
+    : check.ok
+      ? { text: check.kind === 'accept' ? `Accept for ${where}` : `Place by hand in ${where}`, color: tones.green.fg }
+      : { text: check.reason, color: tones.red.fg };
+  return (
+    <Paper elevation={8} sx={{ px: 1.5, py: 1, borderRadius: 1.5, maxWidth: 320, border: 1, borderColor: check ? (check.ok ? tones.green.solid : tones.red.solid) : 'divider' }}>
+      <Box sx={{ fontWeight: 700, fontSize: 13.5 }}>{ui.nameOf(patientId)}</Box>
+      <Box sx={{ fontSize: 12.5, fontWeight: 600, color: line.color }}>{line.text}</Box>
+    </Paper>
+  );
+}
+
 // ── Header (SR1, A6, A9, A10) ───────────────────────────────────────────
+
+const VIEWS: { value: BoardView; label: string; hint: string; icon: ReactNode }[] = [
+  { value: 'cards', label: 'Cards', hint: 'Cards: everything on each card', icon: <ViewAgendaOutlinedIcon fontSize="small" /> },
+  { value: 'compact', label: 'Compact', hint: 'Compact: two lines per card, more on screen', icon: <ViewHeadlineIcon fontSize="small" /> },
+  { value: 'list', label: 'List', hint: 'List: one row per patient and slot', icon: <ViewListIcon fontSize="small" /> },
+  { value: 'matrix', label: 'Matrix', hint: 'Matrix: every patient against every open slot', icon: <GridOnIcon fontSize="small" /> },
+];
 
 function BoardHeader() {
   const { state, board, actions, me } = useStore();
@@ -153,6 +219,7 @@ function BoardHeader() {
   const since = board.sinceSnapshot;
   const parts = [
     since.accepted && `${since.accepted} accepted`,
+    since.placed && `${since.placed} placed by hand`,
     since.dismissed && `${since.dismissed} dismissed`,
     since.newProposals && `${since.newProposals} new proposal${since.newProposals === 1 ? '' : 's'}`,
     since.droppedProposals && `${since.droppedProposals} proposal${since.droppedProposals === 1 ? '' : 's'} dropped`,
@@ -232,6 +299,34 @@ function BoardHeader() {
             </MenuItem>
           ))}
         </Menu>
+
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <Typography component="span" variant="body2" color="text.secondary" id="view-label">
+            View
+          </Typography>
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={ctx.view}
+            onChange={(_, v: BoardView | null) => v && actions.setSettings({ boardView: v })}
+            aria-labelledby="view-label"
+            sx={{ '& .MuiToggleButton-root': { py: 0.5, px: 1, textTransform: 'none', fontSize: 13, gap: 0.5 } }}
+          >
+            {VIEWS.map((v) => (
+              <ToggleButton key={v.value} value={v.value} aria-label={v.label}>
+                <Tooltip title={v.hint}>
+                  <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                    {v.icon}
+                    <Box component="span" sx={{ display: { xs: 'none', lg: 'inline' } }}>
+                      {v.label}
+                    </Box>
+                  </Box>
+                </Tooltip>
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+          <DesignNote id="SR7" />
+        </Box>
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
           <Typography component="span" variant="body2" color="text.secondary" id="names-label">

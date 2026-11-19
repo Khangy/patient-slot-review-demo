@@ -7,6 +7,7 @@ import type {
   NotSeekingReason,
   Pairing,
   PatientStatus,
+  PlaceReason,
   Settings,
   Staging,
   Step,
@@ -15,7 +16,7 @@ import type {
   Watch,
 } from '@/domain/types';
 import { freshState, STATE_VERSION } from '@/domain/seed';
-import { computeBoard, dismissReasonLabel, type Board } from '@/domain/board';
+import { computeBoard, dismissReasonLabel, placeReasonLabel, type Board } from '@/domain/board';
 import { addDays, demoNow, fmtShort, MEETING_SNAPSHOT_AT, nextBusinessDay, TODAY } from '@/domain/dates';
 import { findOpening, labelFor, member } from '@/domain/names';
 import { stageBase } from '@/domain/matching';
@@ -75,6 +76,53 @@ function log(s: DemoState, patientId: string, at: string, verb: string, text: st
   s.activity.unshift({ id: rid('a'), patientId, at, by, verb, text });
 }
 
+/** Accept (or place by hand): hold the slot and give each next step a person and a date. */
+function acceptInto(
+  s: DemoState,
+  at: string,
+  me: UserId,
+  patientId: string,
+  openingId: string,
+  choice: number,
+  plan: AcceptPlan,
+  placedByHand?: Pairing['placedByHand'],
+) {
+  s.pairings = s.pairings.filter((pr) => !(pr.patientId === patientId && pr.openingId === openingId));
+  const consentWho = member(plan.consentBy).short;
+  const labsWho = member(plan.labsBy).short;
+  const where = labelFor(s.trials, openingId);
+  const how = placedByHand
+    ? `Placed by hand at the meeting, ahead of the optimizer's order · ${placeReasonLabel(placedByHand.reason)}${placedByHand.note ? `: ${placedByHand.note}` : ''}.`
+    : 'Accepted at the meeting.';
+  const steps: Step[] = [
+    { id: rid('st'), kind: 'accepted', label: placedByHand ? 'Placed at the meeting' : 'Accepted at the meeting', assignee: me, due: TODAY, doneAt: at, doneBy: me },
+    { id: rid('st'), kind: 'consent_call', label: 'Consent call', assignee: plan.consentBy, due: plan.consentDue },
+    { id: rid('st'), kind: 'prescreen_labs', label: 'Book pre-screen labs', assignee: plan.labsBy, dueText: 'after consent' },
+    { id: rid('st'), kind: 'prescreening_opens', label: "Pre-screening opens on the patient's Enrollment tab", dueText: 'automatic', auto: true },
+  ];
+  s.pairings.push({
+    id: rid('pair'),
+    patientId,
+    openingId,
+    status: 'accepted',
+    choice,
+    decidedAt: at,
+    decidedBy: me,
+    holdUntil: addDays(TODAY, 7),
+    placedByHand,
+    steps,
+    trail: [{ at, by: me, text: `${how} Consent call to ${consentWho}, due ${fmtShort(plan.consentDue)}; pre-screen labs to ${labsWho} after consent.` }],
+  });
+  log(
+    s,
+    patientId,
+    at,
+    placedByHand ? 'PLACED BY HAND' : 'ACCEPTED',
+    `${where} at the Thursday meeting${placedByHand ? ` · ${placeReasonLabel(placedByHand.reason)}` : ''} · consent call: ${consentWho}, due ${fmtShort(plan.consentDue)}`,
+    me,
+  );
+}
+
 export interface QueueResult {
   ok: boolean;
   message: string;
@@ -108,6 +156,8 @@ export interface Actions {
   removeFromReview(patientId: string): void;
 
   accept(patientId: string, openingId: string, choice: number, plan: AcceptPlan): void;
+  /** Drag to a slot: places the patient ahead of the optimizer's order, with a reason. */
+  place(patientId: string, openingId: string, plan: AcceptPlan, reason: PlaceReason, note?: string): void;
   dismiss(patientId: string, openingId: string, choice: number, reason: DismissReason, note?: string): void;
   undoPairing(pairingId: string): void;
   completeStep(pairingId: string, stepId: string): void;
@@ -342,31 +392,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           log(s, p.id, at, 'REMOVED FROM REVIEW', "Thursday's Patient Slot Review", me);
         }),
 
-      accept: (patientId, openingId, choice, plan) =>
+      accept: (patientId, openingId, choice, plan) => mutate((s, at, me) => acceptInto(s, at, me, patientId, openingId, choice, plan)),
+
+      place: (patientId, openingId, plan, reason, note) =>
         mutate((s, at, me) => {
-          s.pairings = s.pairings.filter((pr) => !(pr.patientId === patientId && pr.openingId === openingId));
-          const consentWho = member(plan.consentBy).short;
-          const labsWho = member(plan.labsBy).short;
-          const steps: Step[] = [
-            { id: rid('st'), kind: 'accepted', label: 'Accepted at the meeting', assignee: me, due: TODAY, doneAt: at, doneBy: me },
-            { id: rid('st'), kind: 'consent_call', label: 'Consent call', assignee: plan.consentBy, due: plan.consentDue },
-            { id: rid('st'), kind: 'prescreen_labs', label: 'Book pre-screen labs', assignee: plan.labsBy, dueText: 'after consent' },
-            { id: rid('st'), kind: 'prescreening_opens', label: "Pre-screening opens on the patient's Enrollment tab", dueText: 'automatic', auto: true },
-          ];
-          const pairing: Pairing = {
-            id: rid('pair'),
-            patientId,
-            openingId,
-            status: 'accepted',
-            choice,
-            decidedAt: at,
-            decidedBy: me,
-            holdUntil: addDays(TODAY, 7),
-            steps,
-            trail: [{ at, by: me, text: `Accepted at the meeting. Consent call to ${consentWho}, due ${fmtShort(plan.consentDue)}; pre-screen labs to ${labsWho} after consent.` }],
-          };
-          s.pairings.push(pairing);
-          log(s, patientId, at, 'ACCEPTED', `${name(s, openingId)} at the Thursday meeting · consent call: ${consentWho}, due ${fmtShort(plan.consentDue)}`, me);
+          const p = patientIn(s, patientId);
+          if (p.status !== 'seeking') {
+            log(s, p.id, at, 'STATUS CHANGED', `${STATUS_LABEL[p.status]} → Seeking (placed in a slot)`, me);
+            p.status = 'seeking';
+            p.statusSince = TODAY;
+          }
+          const choice = p.queue.findIndex((e) => e.openingId === openingId) + 1;
+          acceptInto(s, at, me, patientId, openingId, choice, plan, { reason, note: note?.trim() || undefined });
         }),
 
       dismiss: (patientId, openingId, choice, reason, note) =>

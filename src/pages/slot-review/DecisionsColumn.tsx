@@ -2,35 +2,34 @@ import { Box, Button, Collapse, Link, TextField } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import type { DismissReason, Pairing, Step, UserId } from '@/domain/types';
-import { computeBoard, dismissReasonLabel, type Blocked, type Decision } from '@/domain/board';
+import type { Step } from '@/domain/types';
+import { dismissReasonLabel, placeReasonLabel, type Blocked, type Decision } from '@/domain/board';
 import { fmtWeekday, fmtWhen } from '@/domain/dates';
 import { findOpening, labelFor, member, ordinal } from '@/domain/names';
-import { useStore, type AcceptPlan } from '@/state/store';
+import { useStore } from '@/state/store';
 import { useToast } from '@/components/Toast';
 import { PersonTag, ToneChip, useTones, type ToneName } from '@/components/ui';
 import { BLOCKED, DECISION } from '@/components/statusMeta';
 import { DesignNote } from '@/notes/DesignNote';
 import { currentStep, dueInfo, dueThisWeek, openStepsFor, useBoardUi } from './boardUi';
-import { CardBox, Column, GroupLabel, Muted, Row, Segmented } from './parts';
-import { AcceptDialog, DismissDialog, HandOffDialog, StepDot } from './dialogs';
-
-type Target = { patientId: string; openingId: string; choice: number };
+import { CardBox, clampSx, Column, GroupLabel, ListFrame, Muted, ReduceBar, Row, Segmented } from './parts';
+import { StepDot } from './dialogs';
+import { useBoardActions } from './BoardActions';
+import { useShowAll } from './reduce';
+import { isDragging } from './dnd';
 
 export function DecisionsColumn() {
-  const { state, board, actions, me, now } = useStore();
+  const { state, board, me } = useStore();
   const ui = useBoardUi();
-  const toast = useToast();
   const ref = useRef<HTMLElement>(null);
-  const stateRef = useRef(state);
-  stateRef.current = state;
-  const [accepting, setAccepting] = useState<Target | null>(null);
-  const [dismissing, setDismissing] = useState<Target | null>(null);
-  const [handing, setHanding] = useState<{ pairing: Pairing; step: Step } | null>(null);
+  const [showAll, setShowAll] = useShowAll(ui.selection);
+  const list = ui.view === 'list';
+  const dense = ui.view !== 'cards';
 
   const sel = ui.selection;
+  const narrow = !!sel && !showAll;
   useEffect(() => {
-    if (!ui.wide || !sel) return;
+    if (!ui.wide || !sel || isDragging()) return;
     const target =
       sel.kind === 'patient'
         ? ref.current?.querySelector(`[data-dpid="${sel.id}"]`)
@@ -38,51 +37,8 @@ export function DecisionsColumn() {
     target?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [sel, ui.wide, ui.decisionsTab]);
 
-  const undoLatest = (patientId: string, openingId: string, status: Pairing['status']) => () => {
-    const pr = stateRef.current.pairings.find((x) => x.patientId === patientId && x.openingId === openingId && x.status === status);
-    if (pr) actions.undoPairing(pr.id);
-  };
-
-  const confirmAccept = (plan: AcceptPlan) => {
-    if (!accepting) return;
-    const t = accepting;
-    actions.accept(t.patientId, t.openingId, t.choice, plan);
-    setAccepting(null);
-    toast(`Accepted. Consent call: ${member(plan.consentBy).short}, due ${fmtWeekday(plan.consentDue)}.`, {
-      actionLabel: 'Undo',
-      onAction: undoLatest(t.patientId, t.openingId, 'accepted'),
-    });
-  };
-
-  const confirmDismiss = (reason: DismissReason, note: string) => {
-    if (!dismissing) return;
-    const t = dismissing;
-    // Who moves up: re-plan with this pairing dismissed and see who is newly proposed here.
-    const sim = computeBoard({
-      patients: state.patients,
-      trials: state.trials,
-      pairings: [
-        ...state.pairings.filter((x) => !(x.patientId === t.patientId && x.openingId === t.openingId)),
-        { id: 'sim', patientId: t.patientId, openingId: t.openingId, status: 'dismissed', choice: t.choice, decidedAt: now(), decidedBy: me.id, steps: [], trail: [] },
-      ],
-    });
-    const before = new Set(board.openingById[t.openingId]?.proposed ?? []);
-    const moved = sim.openingById[t.openingId]?.proposed.find((pid) => !before.has(pid) && pid !== t.patientId);
-    actions.dismiss(t.patientId, t.openingId, t.choice, reason, note);
-    setDismissing(null);
-    const where = labelFor(state.trials, t.openingId);
-    toast(moved ? `Dismissed. ${ui.nameOf(moved)} moves up for ${where}.` : `Dismissed. No one else in line for ${where}.`, {
-      actionLabel: 'Undo',
-      onAction: undoLatest(t.patientId, t.openingId, 'dismissed'),
-    });
-  };
-
-  const confirmHandOff = (to: UserId, due: string, note: string) => {
-    if (!handing) return;
-    actions.handOff(handing.pairing.id, handing.step.id, to, note, due);
-    toast(`${handing.step.label} handed to ${member(to).short}, due ${fmtWeekday(due)}.`);
-    setHanding(null);
-  };
+  const applies = (patientId: string, openingIds: string[]) => !sel || (sel.kind === 'patient' ? sel.id === patientId : openingIds.includes(sel.id));
+  const selName = !sel ? '' : sel.kind === 'patient' ? ui.nameOf(sel.id) : board.openingById[sel.id]?.short ?? '';
 
   // Tracking, filtered by "Assigned to" (SR3)
   const filtered = useMemo(() => {
@@ -91,8 +47,11 @@ export function DecisionsColumn() {
     return board.decisions.filter((d) => d.pairing && d.kind !== 'dismissed' && openStepsFor(d.pairing, who).length > 0);
   }, [board.decisions, ui.assigned]);
 
+  const visible = narrow ? filtered.filter((d) => applies(d.patientId, [d.openingId])) : filtered;
+  const blockedVisible = narrow ? board.blocked.filter((b) => applies(b.patientId, b.openingIds)) : board.blocked;
+
   const byKind = (k: Decision['kind']) =>
-    filtered
+    visible
       .filter((d) => d.kind === k)
       .sort((a, b) => labelFor(state.trials, a.openingId).localeCompare(labelFor(state.trials, b.openingId)) || ui.nameOf(a.patientId).localeCompare(ui.nameOf(b.patientId)));
 
@@ -138,6 +97,16 @@ export function DecisionsColumn() {
     >
       {ui.decisionsTab === 'tracking' ? (
         <>
+          {sel ? (
+            <ReduceBar
+              shown={filtered.filter((d) => applies(d.patientId, [d.openingId])).length}
+              total={filtered.length}
+              noun="decisions"
+              who={selName}
+              all={showAll}
+              onToggle={setShowAll}
+            />
+          ) : null}
           {assignedSummary ? (
             <Box sx={{ px: 0.25, fontSize: 13, fontWeight: 600 }}>
               {assignedSummary}{' '}
@@ -152,19 +121,29 @@ export function DecisionsColumn() {
                 <GroupLabel>
                   {g.title} · {g.items.length}
                 </GroupLabel>
-                {g.items.map((d) => (
-                  <DecisionCard
-                    key={d.key}
-                    d={d}
-                    onAccept={() => setAccepting({ patientId: d.patientId, openingId: d.openingId, choice: d.choice })}
-                    onDismiss={() => setDismissing({ patientId: d.patientId, openingId: d.openingId, choice: d.choice })}
-                    onHandOff={(pairing, step) => setHanding({ pairing, step })}
-                  />
-                ))}
+                <ListFrame list={list}>
+                  {g.items.map((d) => (
+                    <DecisionCard key={d.key} d={d} narrowed={narrow} dense={dense} list={list} />
+                  ))}
+                </ListFrame>
               </Box>
             ) : null,
           )}
           {filtered.length === 0 ? <Muted>Nothing to track for this filter.</Muted> : null}
+          {filtered.length > 0 && visible.length === 0 ? (
+            <Muted>
+              No decisions for {selName} yet.
+              {sel?.kind === 'patient' && board.patientById[sel.id]?.blocked ? (
+                <>
+                  {' '}
+                  {board.patientById[sel.id]?.blocked?.label}:{' '}
+                  <Link component="button" type="button" variant="body2" onClick={() => ui.setDecisionsTab('blocked')} sx={{ verticalAlign: 'baseline' }}>
+                    see Blocked
+                  </Link>
+                </>
+              ) : null}
+            </Muted>
+          ) : null}
         </>
       ) : (
         <>
@@ -173,27 +152,34 @@ export function DecisionsColumn() {
             <DesignNote id="A7" />
             <DesignNote id="SR4" />
           </Row>
+          {sel ? (
+            <ReduceBar
+              shown={board.blocked.filter((b) => applies(b.patientId, b.openingIds)).length}
+              total={board.blocked.length}
+              noun="blocked"
+              who={selName}
+              all={showAll}
+              onToggle={setShowAll}
+            />
+          ) : null}
           {board.blocked.length === 0 ? <Muted>Nobody is blocked.</Muted> : null}
-          {board.blocked.map((b) => (
-            <BlockedCard key={b.patientId} b={b} />
-          ))}
+          {board.blocked.length > 0 && blockedVisible.length === 0 ? <Muted>No one blocked for {selName}.</Muted> : null}
+          <ListFrame list={list}>
+            {blockedVisible.map((b) => (
+              <BlockedCard key={b.patientId} b={b} narrowed={narrow} dense={dense} list={list} />
+            ))}
+          </ListFrame>
         </>
       )}
-
-      {accepting ? <AcceptDialog key={`a-${accepting.patientId}-${accepting.openingId}`} target={accepting} onClose={() => setAccepting(null)} onConfirm={confirmAccept} /> : null}
-      {dismissing ? (
-        <DismissDialog key={`d-${dismissing.patientId}-${dismissing.openingId}`} target={dismissing} onClose={() => setDismissing(null)} onConfirm={confirmDismiss} />
-      ) : null}
-      {handing ? <HandOffDialog key={`h-${handing.step.id}`} target={handing} onClose={() => setHanding(null)} onConfirm={confirmHandOff} /> : null}
     </Column>
   );
 }
 
 /** Highlight / dim a card from the board's one selection (SR2). */
-function useSelectionState(patientId: string, openingIds: string[]) {
+function useSelectionState(patientId: string, openingIds: string[], narrowed: boolean) {
   const ui = useBoardUi();
   const sel = ui.selection;
-  if (!sel) return { selected: false, dim: false };
+  if (!sel || narrowed) return { selected: false, dim: false };
   const hit = sel.kind === 'patient' ? sel.id === patientId : openingIds.includes(sel.id);
   return { selected: hit, dim: !hit };
 }
@@ -224,21 +210,13 @@ function DueText({ step }: { step?: Step }) {
   );
 }
 
-function DecisionCard({
-  d,
-  onAccept,
-  onDismiss,
-  onHandOff,
-}: {
-  d: Decision;
-  onAccept: () => void;
-  onDismiss: () => void;
-  onHandOff: (pairing: Pairing, step: Step) => void;
-}) {
+function DecisionCard({ d, narrowed, dense, list }: { d: Decision; narrowed: boolean; dense: boolean; list: boolean }) {
   const { state, board, actions, me } = useStore();
   const toast = useToast();
   const ui = useBoardUi();
-  const { selected, dim } = useSelectionState(d.patientId, [d.openingId]);
+  const act = useBoardActions();
+  const target = { patientId: d.patientId, openingId: d.openingId, choice: d.choice };
+  const { selected, dim } = useSelectionState(d.patientId, [d.openingId], narrowed);
   const [open, setOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState('');
@@ -250,34 +228,41 @@ function DecisionCard({
   const consentPending = pr?.status === 'accepted' && pr.holdUntil && !pr.steps.find((s) => s.kind === 'consent_call')?.doneAt;
 
   return (
-    <CardBox selected={selected} dim={dim} data={{ 'data-dpid': d.patientId, 'data-doid': d.openingId }}>
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+    <CardBox selected={selected} dim={dim} dense={dense} variant={list ? 'row' : 'card'} data={{ 'data-dpid': d.patientId, 'data-doid': d.openingId }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: dense ? 0.5 : 0.75 }}>
         <Row>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <NameButton patientId={d.patientId} />
           </Box>
-          {d.newSinceSnapshot ? <ToneChip tone="teal" variant="outline" label="New since snapshot" size="tiny" /> : null}
+          {d.newSinceSnapshot ? <ToneChip tone="teal" variant="outline" label={dense ? 'New' : 'New since snapshot'} size="tiny" /> : null}
+          {pr?.placedByHand ? <ToneChip tone="indigo" variant="outline" label="Placed by hand" size="tiny" /> : null}
           <ToneChip tone={meta.tone} label={meta.label} size="tiny" />
         </Row>
-        <Box sx={{ fontSize: 12.5 }}>
-          → <b>{labelFor(state.trials, d.openingId, true)}</b>
-          <Muted size={12.5}> · {ordinal(d.choice)} choice</Muted>
-          {d.kind === 'proposed' ? <DesignNote id="A5" /> : null}
+        <Box sx={[{ fontSize: 12.5 }, dense ? { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } : {}]}>
+          → <b>{labelFor(state.trials, d.openingId, !dense)}</b>
+          <Muted size={12.5}> · {d.choice ? `${ordinal(d.choice)} choice` : 'not on their queue'}</Muted>
+          {d.kind === 'proposed' && !dense ? <DesignNote id="A5" /> : null}
         </Box>
+        {pr?.placedByHand && !dense ? (
+          <Muted size={12}>
+            {placeReasonLabel(pr.placedByHand.reason)}
+            {pr.placedByHand.note ? `: ${pr.placedByHand.note}` : ''}
+          </Muted>
+        ) : null}
 
         {d.kind === 'proposed' ? (
           <>
-            {match?.result === 'pending_review' ? (
+            {match?.result === 'pending_review' && !dense ? (
               <Muted size={12}>Fit pending review: {match.missing?.join(', ')}</Muted>
             ) : null}
             <Row>
-              <Button size="small" variant="contained" onClick={onAccept}>
+              <Button size="small" variant="contained" onClick={() => act.accept(target)} sx={dense ? { py: 0, minHeight: 26 } : undefined}>
                 Accept
               </Button>
-              <Button size="small" variant="outlined" color="inherit" onClick={onDismiss}>
+              <Button size="small" variant="outlined" color="inherit" onClick={() => act.dismiss(target)} sx={dense ? { py: 0, minHeight: 26 } : undefined}>
                 Dismiss…
               </Button>
-              <Muted size={12}>assign on accept: Maya R. (consent call)</Muted>
+              {!dense ? <Muted size={12}>assign on accept: Maya R. (consent call)</Muted> : null}
             </Row>
           </>
         ) : null}
@@ -336,7 +321,7 @@ function DecisionCard({
                     >
                       Mark {step.label.toLowerCase()} done
                     </Button>
-                    <Button size="small" variant="outlined" color="inherit" onClick={() => onHandOff(pr, step)}>
+                    <Button size="small" variant="outlined" color="inherit" onClick={() => act.handOff(pr, step)}>
                       Hand off…
                     </Button>
                     <Button size="small" color="inherit" onClick={() => setNoteOpen((x) => !x)} aria-expanded={noteOpen}>
@@ -417,12 +402,12 @@ function DecisionCard({
   );
 }
 
-function BlockedCard({ b }: { b: Blocked }) {
+function BlockedCard({ b, narrowed, dense, list }: { b: Blocked; narrowed: boolean; dense: boolean; list: boolean }) {
   const { state, actions } = useStore();
   const ui = useBoardUi();
   const toast = useToast();
   const navigate = useNavigate();
-  const { selected, dim } = useSelectionState(b.patientId, b.openingIds);
+  const { selected, dim } = useSelectionState(b.patientId, b.openingIds, narrowed);
   const tone: ToneName = BLOCKED[b.reason].tone;
   const p = state.patients.find((x) => x.id === b.patientId);
   const first = b.openingIds[0];
@@ -435,16 +420,18 @@ function BlockedCard({ b }: { b: Blocked }) {
   const watching = !!first && !!p?.watches.some((w) => w.reason === 'slot' && w.openingId === first);
 
   return (
-    <CardBox selected={selected} dim={dim} data={{ 'data-dpid': b.patientId, ...(first ? { 'data-doid': first } : {}) }}>
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+    <CardBox selected={selected} dim={dim} dense={dense} variant={list ? 'row' : 'card'} data={{ 'data-dpid': b.patientId, ...(first ? { 'data-doid': first } : {}) }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: dense ? 0.5 : 0.75 }}>
         <Row>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <NameButton patientId={b.patientId} />
           </Box>
           <ToneChip tone={tone} label={b.label} size="tiny" />
         </Row>
-        <Box sx={{ fontSize: 12.5, lineHeight: 1.5 }}>{b.detail}</Box>
-        {b.aheadIds?.length ? <Muted size={12}>Ahead: {b.aheadIds.map(ui.nameOf).join('; ')}</Muted> : null}
+        <Box sx={[{ fontSize: 12.5, lineHeight: 1.5 }, dense ? clampSx(2) : {}]} title={dense ? b.detail : undefined}>
+          {b.detail}
+        </Box>
+        {b.aheadIds?.length && !dense ? <Muted size={12}>Ahead: {b.aheadIds.map(ui.nameOf).join('; ')}</Muted> : null}
         {b.hintOpeningIds.map((oid) => (
           <Row key={oid} sx={{ fontSize: 12.5 }}>
             <Box component="span">

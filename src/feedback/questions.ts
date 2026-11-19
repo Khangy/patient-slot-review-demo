@@ -88,6 +88,27 @@ export const QUESTIONS: Question[] = [
     lookAt: { label: 'Elena Rossi › Trial Options', to: '/patients/p-rossi?tab=options' },
   },
   {
+    id: 'drag-place',
+    boards: ['SR5'],
+    prompt: 'When someone drags a patient onto a slot the optimizer gave to someone else, what should happen?',
+    context: 'Try dragging Siddiqui, Bilal onto SOLVE-Lung 3 › Arm A. The dialog asks why, shows whose proposal moves, then holds the slot like Accept.',
+    options: [
+      'Place by hand with a reason; the last-ranked proposal moves (as shown)',
+      'Only the PI can place by hand',
+      'It becomes a proposal the meeting still has to accept',
+      'Do not allow it: only the optimizer proposes',
+    ],
+    lookAt: { label: 'Patient Slot Review', to: '/slot-review' },
+  },
+  {
+    id: 'board-view',
+    boards: ['SR6', 'SR7'],
+    prompt: 'Which view should the meeting open on?',
+    context: 'View (above the board) switches between Cards, Compact, List and Matrix. Selecting a patient or a slot narrows the other lists in every view.',
+    options: ['Cards', 'Compact', 'List', 'Matrix', 'Each person picks, the board remembers'],
+    lookAt: { label: 'Patient Slot Review', to: '/slot-review' },
+  },
+  {
     id: 'anything-else',
     boards: [],
     prompt: 'Anything else?',

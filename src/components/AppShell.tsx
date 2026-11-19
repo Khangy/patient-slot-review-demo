@@ -78,6 +78,10 @@ export function AboutDialog({ open, onClose }: { open: boolean; onClose: () => v
               <b>Viewing as</b> (top right) switches between the PI, a physician, the CRC and the research nurse, so "Assigned to: Me" shows each person's steps.
             </li>
             <li>
+              On <b>Patient Slot Review</b>, drag a patient card onto a slot to accept or place them, and use <b>View</b> to switch between Cards, Compact, List
+              and Matrix.
+            </li>
+            <li>
               <b>Design notes</b> puts a small board number (07, A4, SR2…) next to each change, with what it looked like before.
             </li>
             <li>

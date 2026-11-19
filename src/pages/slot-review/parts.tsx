@@ -1,5 +1,6 @@
-import { Box, ButtonBase, ToggleButton, ToggleButtonGroup, Typography, useTheme, type SxProps, type Theme } from '@mui/material';
-import { forwardRef, type ReactNode } from 'react';
+import { Box, ButtonBase, Link, ToggleButton, ToggleButtonGroup, Typography, useTheme, type SxProps, type Theme } from '@mui/material';
+import type { SystemStyleObject } from '@mui/system';
+import { forwardRef, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useTone } from '@/components/ui';
 
 // Building blocks shared by the three columns.
@@ -20,6 +21,7 @@ export const Column = forwardRef<HTMLElement, {
       ref={ref}
       component="section"
       aria-label={label}
+      data-scroll-col=""
       sx={{
         minWidth: 0,
         display: 'flex',
@@ -101,50 +103,92 @@ export function Segmented<T extends string>({
   );
 }
 
-const cardSx = (selected: boolean, dim: boolean, solid: string, highlight: boolean) => ({
-  display: 'block',
-  width: '100%',
-  textAlign: 'left',
-  borderRadius: 1.5,
-  border: '1px solid',
-  borderColor: selected || highlight ? solid : 'divider',
-  boxShadow: selected ? `0 0 0 1px ${solid}` : 'none',
-  bgcolor: 'background.paper',
-  p: 1.25,
-  opacity: dim ? 0.45 : 1,
-  transition: 'opacity .15s, border-color .15s',
-  fontFamily: 'inherit',
-  color: 'text.primary',
-});
+/** card: a bordered card; row: a list row inside a ListFrame (List view). */
+export type CardVariant = 'card' | 'row';
+
+const cardSx = (selected: boolean, dim: boolean, solid: string, highlight: boolean, variant: CardVariant, tint: string): SystemStyleObject<Theme> =>
+  variant === 'row'
+    ? {
+        display: 'block',
+        width: '100%',
+        textAlign: 'left',
+        borderRadius: 0,
+        borderBottom: '1px solid',
+        borderColor: 'divider',
+        borderLeft: `3px solid ${selected || highlight ? solid : 'transparent'}`,
+        bgcolor: selected ? tint : 'background.paper',
+        px: 1.25,
+        py: 0.75,
+        opacity: dim ? 0.45 : 1,
+        transition: 'opacity .15s, background-color .15s',
+        fontFamily: 'inherit',
+        color: 'text.primary',
+        '&:last-of-type': { borderBottom: 0 },
+      }
+    : {
+        display: 'block',
+        width: '100%',
+        textAlign: 'left',
+        borderRadius: 1.5,
+        border: '1px solid',
+        borderColor: selected || highlight ? solid : 'divider',
+        boxShadow: selected ? `0 0 0 1px ${solid}` : 'none',
+        bgcolor: 'background.paper',
+        p: 1.25,
+        opacity: dim ? 0.45 : 1,
+        transition: 'opacity .15s, border-color .15s',
+        fontFamily: 'inherit',
+        color: 'text.primary',
+      };
 
 /** A whole-card button (patients, openings). Never put another button inside it. */
 export function CardButton({
   selected = false,
   dim = false,
   highlight = false,
+  variant = 'card',
+  dense = false,
+  grab = false,
+  ghosted = false,
   onClick,
+  onPointerDown,
   children,
   data,
+  sx,
 }: {
   selected?: boolean;
   dim?: boolean;
   highlight?: boolean;
+  variant?: CardVariant;
+  /** Compact view: tighter padding */
+  dense?: boolean;
+  /** the card can be dragged onto a slot */
+  grab?: boolean;
+  /** this card is the one being dragged */
+  ghosted?: boolean;
   onClick: () => void;
+  onPointerDown?: (e: ReactPointerEvent) => void;
   children: ReactNode;
   data?: Record<string, string>;
+  sx?: SxProps<Theme>;
 }) {
   const t = useTone('teal');
   return (
     <ButtonBase
       onClick={onClick}
+      onPointerDown={onPointerDown}
       aria-pressed={selected}
       {...data}
       sx={[
-        cardSx(selected, dim, t.solid, highlight),
+        cardSx(selected, dim, t.solid, highlight, variant, t.bg),
+        dense && variant === 'card' ? { px: 1.25, py: 0.75 } : {},
+        grab ? { cursor: 'grab', touchAction: 'manipulation' } : {},
+        ghosted ? { opacity: 0.4, borderStyle: 'dashed' } : {},
         {
-          '&:hover': { borderColor: selected ? t.solid : 'text.secondary' },
-          '&.Mui-focusVisible': { outline: `2px solid ${t.solid}`, outlineOffset: 2 },
+          '&:hover': variant === 'row' ? { bgcolor: selected ? t.bg : 'action.hover' } : { borderColor: selected ? t.solid : 'text.secondary' },
+          '&.Mui-focusVisible': { outline: `2px solid ${t.solid}`, outlineOffset: variant === 'row' ? -2 : 2 },
         },
+        ...(Array.isArray(sx) ? sx : sx ? [sx] : []),
       ]}
     >
       {children}
@@ -156,21 +200,80 @@ export function CardButton({
 export function CardBox({
   selected = false,
   dim = false,
+  variant = 'card',
+  dense = false,
   children,
   data,
 }: {
   selected?: boolean;
   dim?: boolean;
+  variant?: CardVariant;
+  dense?: boolean;
   children: ReactNode;
   data?: Record<string, string>;
 }) {
   const t = useTone('teal');
   return (
-    <Box {...data} sx={cardSx(selected, dim, t.solid, false)}>
+    <Box {...data} sx={[cardSx(selected, dim, t.solid, false, variant, t.bg), dense && variant === 'card' ? { px: 1.25, py: 0.75 } : {}]}>
       {children}
     </Box>
   );
 }
+
+/** List view: one bordered frame around a group's rows. Other views lay cards out with a gap. */
+export function ListFrame({ list, children }: { list: boolean; children: ReactNode }) {
+  if (!list) return <>{children}</>;
+  return (
+    <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1.5, overflow: 'hidden', bgcolor: 'background.paper', display: 'flex', flexDirection: 'column' }}>
+      {children}
+    </Box>
+  );
+}
+
+/** SR6: says the list is narrowed to the selection, with the way back to all of it. */
+export function ReduceBar({
+  shown,
+  total,
+  noun,
+  who,
+  all,
+  onToggle,
+}: {
+  shown: number;
+  total: number;
+  noun: string;
+  who: string;
+  all: boolean;
+  onToggle: (all: boolean) => void;
+}) {
+  const t = useTone('teal');
+  return (
+    <Box
+      role="status"
+      sx={{ display: 'flex', alignItems: 'baseline', gap: 1, flexWrap: 'wrap', px: 1, py: 0.5, borderRadius: 1, bgcolor: t.bg, color: t.fg, fontSize: 12.5 }}
+    >
+      <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
+        {all ? (
+          <>
+            All {total} {noun} · <b>{shown}</b> for {who}
+          </>
+        ) : (
+          <>
+            For <b>{who}</b>: {shown} of {total} {noun}
+          </>
+        )}
+      </Box>
+      {shown !== total ? (
+        <Link component="button" type="button" onClick={() => onToggle(!all)} sx={{ fontSize: 12.5, fontWeight: 600 }}>
+          {all ? (shown === 1 ? 'Only this one' : `Only these ${shown}`) : `Show all ${total}`}
+        </Link>
+      ) : null}
+    </Box>
+  );
+}
+
+/** Two lines at most: long notes in Compact and List views. */
+export const clampSx = (lines: number) => ({ display: '-webkit-box', WebkitLineClamp: lines, WebkitBoxOrient: 'vertical', overflow: 'hidden' }) as const;
 
 export function GroupLabel({ children }: { children: ReactNode }) {
   return (

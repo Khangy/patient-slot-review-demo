@@ -2,6 +2,7 @@ node_modules
 dist
 dist-single
 dist-artifact
+dist-pages
 *.local
 .DS_Store
 .vscode/*

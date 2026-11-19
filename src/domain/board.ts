@@ -1,4 +1,4 @@
-import type { DemoState, Opening, Pairing, Patient, Snapshot, Step, Trial } from './types';
+import type { DemoState, Opening, Pairing, Patient, PlaceReason, Snapshot, Step, Trial, UserId } from './types';
 import { isFit, matchPatient, type Match } from './matching';
 import { daysBetween, fmtShort, TODAY } from './dates';
 import { labelFor, openingFull, openingShort } from './names';
@@ -123,7 +123,7 @@ export interface Board {
   nearFuture: NearFutureItem[];
   proposals: { patientId: string; openingId: string }[];
   tiles: { inReview: number; openNow: number; openingSoon: number; openingSoonNoDate: number; blocked: number };
-  sinceSnapshot: { accepted: number; dismissed: number; newProposals: number; droppedProposals: number };
+  sinceSnapshot: { accepted: number; placed: number; dismissed: number; newProposals: number; droppedProposals: number };
 }
 
 const DISMISS_LABEL: Record<string, string> = {
@@ -133,6 +133,14 @@ const DISMISS_LABEL: Record<string, string> = {
   other: 'Other',
 };
 export const dismissReasonLabel = (r?: string) => (r ? DISMISS_LABEL[r] ?? r : '');
+
+export const PLACE_REASONS: { value: PlaceReason; label: string }[] = [
+  { value: 'clinical_urgency', label: 'Clinical urgency' },
+  { value: 'patient_preference', label: 'Patient preference' },
+  { value: 'pi_decision', label: 'PI decision' },
+  { value: 'other', label: 'Other' },
+];
+export const placeReasonLabel = (r?: string) => PLACE_REASONS.find((x) => x.value === r)?.label ?? r ?? '';
 
 const key = (patientId: string, openingId: string) => `${patientId}|${openingId}`;
 
@@ -476,7 +484,8 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
 
   const snapAt = snapshot?.at ?? '0000';
   const sinceSnapshot = {
-    accepted: pairings.filter((pr) => pr.status !== 'dismissed' && pr.decidedAt >= snapAt).length,
+    accepted: pairings.filter((pr) => pr.status !== 'dismissed' && !pr.placedByHand && pr.decidedAt >= snapAt).length,
+    placed: pairings.filter((pr) => pr.status !== 'dismissed' && !!pr.placedByHand && pr.decidedAt >= snapAt).length,
     dismissed: dismissedPairings.filter((pr) => pr.decidedAt >= snapAt).length,
     newProposals: decisions.filter((d) => d.kind === 'proposed' && d.newSinceSnapshot).length,
     droppedProposals: (snapshot?.proposals ?? []).filter(
@@ -504,4 +513,80 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
     },
     sinceSnapshot,
   };
+}
+
+// ── Drag a patient onto a slot ──────────────────────────────────────────
+
+export type PlaceCheck =
+  | { ok: false; reason: string }
+  /** accept: the optimizer already proposed this pairing; place: by hand, ahead of its order */
+  | { ok: true; kind: 'accept' | 'place'; choice: number };
+
+/** Can this patient go into this opening's slot right now, and is it an Accept or a placement by hand? */
+export function placeCheck(board: Board, patientId: string, openingId: string): PlaceCheck {
+  const pv = board.patientById[patientId];
+  const ov = board.openingById[openingId];
+  if (!pv || !ov) return { ok: false, reason: 'Not a slot' };
+  const fx = pv.fixedPairing;
+  if (fx) {
+    const what = fx.status === 'accepted' ? 'Accepted' : 'Pre-screening';
+    return { ok: false, reason: fx.openingId === openingId ? `${what} here already` : `${what} for ${board.openingById[fx.openingId]?.short ?? 'another slot'}: undo that first` };
+  }
+  if (pv.patient.status === 'not_seeking') return { ok: false, reason: 'Not seeking: change the status first' };
+  if (ov.opening.state !== 'open') return { ok: false, reason: 'On hold: no slot open yet' };
+  const m = pv.matchById[openingId];
+  if (!isFit(m)) {
+    if (m?.result === 'needs_status_change') return { ok: false, reason: `Not a fit until the record shows ${m.needs}` };
+    const chk = m?.checks.find((x) => x.outcome === 'not_met');
+    return { ok: false, reason: chk ? `Not a fit: ${chk.patientHas}, needs ${chk.trialWants}` : 'Not a fit' };
+  }
+  if (ov.openNow === 0) return { ok: false, reason: 'No open slot here' };
+  const choice = pv.patient.queue.findIndex((e) => e.openingId === openingId) + 1;
+  if (pv.decision?.kind === 'proposed' && pv.decision.openingId === openingId) return { ok: true, kind: 'accept', choice };
+  return { ok: true, kind: 'place', choice };
+}
+
+export interface PlaceChange {
+  patientId: string;
+  /** their proposal before the placement (undefined: none) */
+  from?: string;
+  /** their proposal after it (undefined: none) */
+  to?: string;
+  /** set when they end up with no proposal */
+  blockedLabel?: string;
+  blockedReason?: BlockedReason;
+}
+
+/**
+ * Re-plans the board as if the patient were placed in the opening by hand, and lists every
+ * other patient whose proposal changes: the one who loses this slot, and anyone who moves up
+ * into the slot the patient was proposed for before.
+ */
+export function simulatePlace(
+  state: Pick<DemoState, 'patients' | 'trials' | 'pairings'>,
+  board: Board,
+  patientId: string,
+  openingId: string,
+  me: UserId,
+  at: string,
+): { released?: string; changes: PlaceChange[] } {
+  const choice = state.patients.find((p) => p.id === patientId)?.queue.findIndex((e) => e.openingId === openingId) ?? -1;
+  const sim = computeBoard({
+    patients: state.patients,
+    trials: state.trials,
+    pairings: [
+      ...state.pairings.filter((x) => !(x.patientId === patientId && x.openingId === openingId)),
+      { id: 'sim', patientId, openingId, status: 'accepted', choice: choice + 1, decidedAt: at, decidedBy: me, steps: [], trail: [], placedByHand: { reason: 'other' } },
+    ],
+  });
+  const before = Object.fromEntries(board.proposals.map((x) => [x.patientId, x.openingId]));
+  const after = Object.fromEntries(sim.proposals.map((x) => [x.patientId, x.openingId]));
+  const changes: PlaceChange[] = [];
+  for (const p of state.patients) {
+    if (p.id === patientId || before[p.id] === after[p.id]) continue;
+    const b = after[p.id] ? undefined : sim.patientById[p.id]?.blocked;
+    changes.push({ patientId: p.id, from: before[p.id], to: after[p.id], blockedLabel: b?.label, blockedReason: b?.reason });
+  }
+  const mine = before[patientId];
+  return { released: mine && mine !== openingId ? mine : undefined, changes };
 }

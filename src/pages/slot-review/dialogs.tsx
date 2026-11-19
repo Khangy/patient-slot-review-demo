@@ -15,13 +15,13 @@ import {
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import { useMemo, useState } from 'react';
-import type { DismissReason, Pairing, Step, UserId } from '@/domain/types';
+import { useMemo, useState, type ReactNode } from 'react';
+import type { DismissReason, Pairing, PlaceReason, Step, UserId } from '@/domain/types';
 import { TEAM, SITE_NAME } from '@/domain/seed';
 import { addDays, fmtShort, fmtTime, fmtWeekday, fmtWhen, nextBusinessDay, TODAY } from '@/domain/dates';
 import { labelFor, member, ordinal } from '@/domain/names';
 import { dxStage, keyMarker } from '@/domain/summary';
-import { dismissReasonLabel } from '@/domain/board';
+import { dismissReasonLabel, PLACE_REASONS, simulatePlace } from '@/domain/board';
 import { useStore, type AcceptPlan } from '@/state/store';
 import { useToast } from '@/components/Toast';
 import { PersonTag, ToneChip, Mono } from '@/components/ui';
@@ -61,10 +61,21 @@ export function AcceptDialog({
   target,
   onClose,
   onConfirm,
+  title,
+  intro,
+  firstStep = 'Accepted at the meeting',
+  confirmLabel = 'Accept and assign',
+  canConfirm = true,
 }: {
   target: { patientId: string; openingId: string; choice: number } | null;
   onClose: () => void;
   onConfirm: (plan: AcceptPlan) => void;
+  /** Place by hand reuses this dialog with its own title, intro and button */
+  title?: string;
+  intro?: ReactNode;
+  firstStep?: string;
+  confirmLabel?: string;
+  canConfirm?: boolean;
 }) {
   const { state, me } = useStore();
   const ui = useBoardUi();
@@ -75,18 +86,18 @@ export function AcceptDialog({
   const opening = labelFor(state.trials, target.openingId, true);
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ pb: 0.5 }}>
-        Accept {ui.nameOf(target.patientId)} → {opening}
-      </DialogTitle>
+      <DialogTitle sx={{ pb: 0.5 }}>{title ?? `Accept ${ui.nameOf(target.patientId)} → ${opening}`}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 0.5 }}>
-          <Muted size={13.5}>
-            {ordinal(target.choice)} choice on the patient's Interest List. Accepting holds the slot and gives each next step a person and a date.
-          </Muted>
+          {intro ?? (
+            <Muted size={13.5}>
+              {ordinal(target.choice)} choice on the patient's Interest List. Accepting holds the slot and gives each next step a person and a date.
+            </Muted>
+          )}
           <Stack spacing={1.5}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
               <StepDot n="✓" done />
-              <Typography sx={{ fontWeight: 600, flex: 1, minWidth: 180 }}>Accepted at the meeting</Typography>
+              <Typography sx={{ fontWeight: 600, flex: 1, minWidth: 180 }}>{firstStep}</Typography>
               <PersonTag userId={me.id} suffix={`· today, ${fmtShort(TODAY)}`} />
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
@@ -114,8 +125,8 @@ export function AcceptDialog({
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" disabled={!consentDue} onClick={() => onConfirm({ consentBy, consentDue, labsBy })}>
-          Accept and assign
+        <Button variant="contained" disabled={!consentDue || !canConfirm} onClick={() => onConfirm({ consentBy, consentDue, labsBy })}>
+          {confirmLabel}
         </Button>
       </DialogActions>
     </Dialog>
@@ -144,6 +155,123 @@ export function StepDot({ n, done, current }: { n: string; done?: boolean; curre
     >
       {n}
     </Box>
+  );
+}
+
+// ── Place by hand (SR5: drag a patient onto a slot) ─────────────────────
+
+const chipGroupSx = {
+  flexWrap: 'wrap',
+  gap: 1,
+  '& .MuiToggleButton-root': { borderRadius: '999px !important', border: '1px solid', borderColor: 'divider', textTransform: 'none', px: 1.75, ml: '0 !important' },
+} as const;
+
+/** What placing this patient by hand does to everyone else's proposals, in patients' names. */
+export function placeChangeLines(
+  sim: ReturnType<typeof simulatePlace>,
+  patientId: string,
+  nameOf: (id: string) => string,
+  label: (oid: string) => string,
+): string[] {
+  const lines: string[] = [];
+  if (sim.released) lines.push(`${nameOf(patientId)}'s proposal for ${label(sim.released)} is released.`);
+  for (const c of sim.changes) {
+    const who = nameOf(c.patientId);
+    if (c.from && c.to) lines.push(`${who} moves from ${label(c.from)} to ${label(c.to)}.`);
+    else if (c.from)
+      lines.push(
+        c.blockedReason === 'outranked'
+          ? `${who} loses the proposal for ${label(c.from)} and has no other open slot: next in line there if one frees up.`
+          : `${who} loses the proposal for ${label(c.from)} and is blocked${c.blockedLabel ? ` (${c.blockedLabel.toLowerCase()})` : ''}.`,
+      );
+    else if (c.to) lines.push(`${who} moves up for ${label(c.to)}.`);
+  }
+  return lines;
+}
+
+export function PlaceDialog({
+  target,
+  onClose,
+  onConfirm,
+}: {
+  target: { patientId: string; openingId: string };
+  onClose: () => void;
+  onConfirm: (plan: AcceptPlan, reason: PlaceReason, note: string) => void;
+}) {
+  const { state, board, me, now } = useStore();
+  const ui = useBoardUi();
+  const [reason, setReason] = useState<PlaceReason | null>(null);
+  const [note, setNote] = useState('');
+  const { patientId, openingId } = target;
+  const label = (oid: string) => labelFor(state.trials, oid);
+  // Re-planned once, when the dialog opens: the preview of what the placement changes.
+  const [sim] = useState(() => simulatePlace(state, board, patientId, openingId, me.id, now()));
+  const p = board.patientById[patientId]?.patient;
+  if (!p) return null;
+  const choice = p.queue.findIndex((e) => e.openingId === openingId) + 1;
+  const dismissed = state.pairings.find((pr) => pr.patientId === patientId && pr.openingId === openingId && pr.status === 'dismissed');
+  const lines = placeChangeLines(sim, patientId, ui.nameOf, label);
+  const needsNote = reason === 'other' && !note.trim();
+
+  const intro = (
+    <Stack spacing={1.5}>
+      <Muted size={13.5}>
+        {choice ? `${ordinal(choice)} choice on their queue.` : 'Not on their queue for Optimized Match.'} Placing by hand puts them ahead of the
+        optimizer's order and holds the slot, like Accept.
+      </Muted>
+      {p.status !== 'seeking' ? <Muted size={13}>Their status changes from {PATIENT_STATUS[p.status].label} to Seeking.</Muted> : null}
+      {dismissed ? (
+        <Muted size={13}>Dismissed earlier at this meeting ({dismissReasonLabel(dismissed.dismissReason)}). Placing replaces the dismissal.</Muted>
+      ) : null}
+      <Box sx={{ p: 1.25, border: 1, borderColor: 'divider', borderRadius: 1.5 }}>
+        <Box sx={{ fontWeight: 600, fontSize: 13, mb: 0.5 }}>What else changes</Box>
+        {lines.length ? (
+          <Box component="ul" sx={{ m: 0, pl: 2.25, fontSize: 13, lineHeight: 1.55 }}>
+            {lines.map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </Box>
+        ) : (
+          <Muted size={13}>No one else's proposal changes: the slot was not proposed to anyone.</Muted>
+        )}
+      </Box>
+      <Box>
+        <Box sx={{ fontWeight: 600, fontSize: 13.5, mb: 0.75 }} id="place-reason-label">
+          Why place by hand?
+        </Box>
+        <ToggleButtonGroup exclusive value={reason} onChange={(_, v: PlaceReason | null) => setReason(v)} aria-labelledby="place-reason-label" sx={chipGroupSx}>
+          {PLACE_REASONS.map((r) => (
+            <ToggleButton key={r.value} value={r.value} size="small">
+              {r.label}
+            </ToggleButton>
+          ))}
+        </ToggleButtonGroup>
+        <TextField
+          label={reason === 'other' ? 'Note' : 'Note (optional)'}
+          placeholder="e.g. rapid progression, cannot wait for next week's run"
+          size="small"
+          fullWidth
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          sx={{ mt: 1.25 }}
+        />
+      </Box>
+    </Stack>
+  );
+
+  return (
+    <AcceptDialog
+      target={{ patientId, openingId, choice }}
+      title={`Place ${ui.nameOf(patientId)} → ${labelFor(state.trials, openingId, true)}`}
+      intro={intro}
+      firstStep="Placed at the meeting"
+      confirmLabel="Place and assign"
+      canConfirm={!!reason && !needsNote}
+      onClose={onClose}
+      onConfirm={(plan) => {
+        if (reason) onConfirm(plan, reason, note);
+      }}
+    />
   );
 }
 

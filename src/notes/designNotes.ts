@@ -106,6 +106,15 @@ const N: DesignNoteEntry[] = [
   { id: 'SR4', area: 'Patient Slot Review', title: 'Near future and blocked', tags: ['Decision'],
     before: 'Openings on hold were invisible until they opened; unplaced patients got one sentence that was often wrong.',
     after: 'Near future lists openings on hold with dates and slots that may come back, with who waits. Blocked lists every unplaced patient with the real reason.' },
+  { id: 'SR5', area: 'Patient Slot Review', title: 'Drag a patient onto a slot', tags: ['Decision'],
+    before: 'Only the optimizer put a patient in a slot. To override it, the team dismissed proposals one by one until the right patient moved up.',
+    after: 'Drag a patient card onto a slot. Every slot says whether it can take them before you let go. Proposed there: Accept. Otherwise: Place by hand, with a reason and a preview of whose proposal moves. "Place here" under each slot does the same without dragging.' },
+  { id: 'SR6', area: 'Patient Slot Review', title: 'Lists narrow to the selection', tags: ['Small PR'],
+    before: 'Nov 12 demo: selecting a patient greyed out the slots that did not apply, so every list stayed as long as before.',
+    after: 'Selecting a patient narrows Slots and Optimizer decisions to what applies to them, grouped (proposed, on their queue, also fits). Selecting a slot narrows Patients to its candidates in rank order. "Show all" brings the rest back.' },
+  { id: 'SR7', area: 'Patient Slot Review', title: 'Board views', tags: ['Decision'],
+    before: 'One card size for everything.',
+    after: 'Cards, Compact (two lines), List (one row each) or Matrix (every patient against every open slot; a cell opens Accept, Dismiss, Place or Queue for that pairing).' },
 ];
 
 export const DESIGN_NOTES: Record<string, DesignNoteEntry> = Object.fromEntries(N.map((n) => [n.id, n]));
