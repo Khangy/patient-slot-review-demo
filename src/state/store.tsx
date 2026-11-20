@@ -16,7 +16,7 @@ import type {
   Watch,
 } from '@/domain/types';
 import { freshState, STATE_VERSION } from '@/domain/seed';
-import { computeBoard, dismissReasonLabel, placeReasonLabel, type Board } from '@/domain/board';
+import { computeBoard, dismissReasonLabel, lastUndoableStep, placeReasonLabel, type Board, type RevertOutcome } from '@/domain/board';
 import { addDays, demoNow, fmtShort, MEETING_SNAPSHOT_AT, nextBusinessDay, TODAY } from '@/domain/dates';
 import { findOpening, labelFor, member } from '@/domain/names';
 import { stageBase } from '@/domain/matching';
@@ -171,7 +171,13 @@ export interface Actions {
   place(patientId: string, openingId: string, plan: AcceptPlan, reason: PlaceReason, note?: string): void;
   dismiss(patientId: string, openingId: string, reason: DismissReason, note?: string): void;
   undoPairing(pairingId: string): void;
+  /** After Accept (or a placement): release the slot, back to the optimizer or dismissed with a reason. */
+  revertPairing(pairingId: string, outcome: RevertOutcome, reason?: DismissReason, note?: string): void;
+  /** Undo for a revert: puts the pairing back as it was. */
+  restorePairing(pairing: Pairing): void;
   completeStep(pairingId: string, stepId: string): void;
+  /** Marks the latest step done back to not done, and undoes what completing it changed. */
+  undoStep(pairingId: string, stepId: string): void;
   handOff(pairingId: string, stepId: string, to: UserId, note?: string, due?: string): void;
   addPairingNote(pairingId: string, text: string): void;
   /** Saves a new meeting snapshot (the demo board already re-plans live). */
@@ -436,11 +442,44 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           log(s, pr.patientId, at, 'UNDONE', `${pr.status === 'dismissed' ? 'Dismissal' : 'Acceptance'} of ${name(s, pr.openingId)} undone`, me);
         }),
 
+      revertPairing: (pairingId, outcome, reason, note) =>
+        mutate((s, at, me) => {
+          const pr = pairingIn(s, pairingId);
+          if (!pr || pr.status === 'dismissed') return;
+          const what = pr.status === 'pre_screening' ? 'Pre-screening' : pr.placedByHand ? 'Placement by hand' : 'Acceptance';
+          const why = [reason && dismissReasonLabel(reason), note?.trim()].filter(Boolean).join(': ');
+          s.pairings = s.pairings.filter((x) => x.id !== pairingId);
+          if (outcome === 'dismiss' && reason) {
+            s.pairings.push({
+              id: rid('pair'),
+              patientId: pr.patientId,
+              openingId: pr.openingId,
+              status: 'dismissed',
+              decidedAt: at,
+              decidedBy: me,
+              dismissReason: reason,
+              dismissNote: note?.trim() || undefined,
+              steps: [],
+              trail: [...pr.trail, { at, by: me, text: `${what} reverted: slot released and dismissed · ${why}` }],
+            });
+          }
+          const where = outcome === 'dismiss' ? 'slot released and dismissed' : 'slot released, back to the optimizer';
+          log(s, pr.patientId, at, 'REVERTED', `${what} of ${name(s, pr.openingId)} reverted · ${where}${why ? ` · ${why}` : ''}`, me);
+        }),
+
+      restorePairing: (pairing) =>
+        mutate((s, at, me) => {
+          s.pairings = s.pairings.filter((x) => !(x.patientId === pairing.patientId && x.openingId === pairing.openingId));
+          s.pairings.push(structuredClone(pairing));
+          log(s, pairing.patientId, at, 'UNDONE', `Revert of ${name(s, pairing.openingId)} undone`, me);
+        }),
+
       completeStep: (pairingId, stepId) =>
         mutate((s, at, me) => {
           const pr = pairingIn(s, pairingId);
           const step = pr?.steps.find((x) => x.id === stepId);
           if (!pr || !step || step.doneAt) return;
+          const undo: NonNullable<Step['undo']> = { holdUntil: pr.holdUntil, status: pr.status === 'pre_screening' ? 'pre_screening' : 'accepted' };
           step.doneAt = at;
           step.doneBy = me;
           pr.trail.push({ at, by: me, text: `${step.label}: done` });
@@ -451,15 +490,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             if (auto) auto.doneAt = at;
             pr.status = 'pre_screening';
             const pi = findOpening(s.trials, pr.openingId)?.trial.pi ?? 'u-patel';
-            pr.steps.push({ id: rid('st'), kind: 'review_results', label: 'Review pre-screen results', assignee: pi, due: nextBusinessDay(TODAY, 4) });
+            const review: Step = { id: rid('st'), kind: 'review_results', label: 'Review pre-screen results', assignee: pi, due: nextBusinessDay(TODAY, 4) };
+            pr.steps.push(review);
+            undo.addedStepId = review.id;
             pr.trail.push({ at, text: `Pre-screening opened. Results review assigned to ${member(pi).short}.` });
             log(s, pr.patientId, at, 'PRE-SCREENING', `Pre-screening opened for ${name(s, pr.openingId)}`);
           }
           const next = pr.steps.find((x) => !x.doneAt && !x.auto);
           if (next && !next.due) {
-            next.due = nextBusinessDay(TODAY, 2);
+            undo.next = { stepId: next.id, due: next.due, dueText: next.dueText, set: nextBusinessDay(TODAY, 2) };
+            next.due = undo.next.set;
             next.dueText = undefined;
           }
+          step.undo = undo;
+        }),
+
+      undoStep: (pairingId, stepId) =>
+        mutate((s, at, me) => {
+          const pr = pairingIn(s, pairingId);
+          const step = pr?.steps.find((x) => x.id === stepId);
+          // only the latest step done: the ones after it depend on it
+          if (!pr || !step?.doneAt || lastUndoableStep(pr)?.id !== stepId) return;
+          const u = step.undo ?? {};
+          step.doneAt = undefined;
+          step.doneBy = undefined;
+          step.undo = undefined;
+          if (step.kind === 'consent_call') pr.holdUntil = u.holdUntil;
+          if (step.kind === 'prescreen_labs') {
+            const auto = pr.steps.find((x) => x.kind === 'prescreening_opens');
+            if (auto) auto.doneAt = undefined;
+            if (u.status) pr.status = u.status;
+            pr.steps = pr.steps.filter((x) => x.id !== u.addedStepId);
+          }
+          // the due date set for the next step comes off, unless someone has changed it since (a hand-off)
+          const next = u.next && pr.steps.find((x) => x.id === u.next!.stepId);
+          if (next && u.next && next.due === u.next.set && !next.doneAt) {
+            next.due = u.next.due;
+            next.dueText = u.next.dueText;
+          }
+          pr.trail.push({ at, by: me, text: `${step.label}: marked not done` });
+          log(s, pr.patientId, at, 'STEP UNDONE', `${step.label} · ${name(s, pr.openingId)}`, me);
         }),
 
       handOff: (pairingId, stepId, to, note, due) =>

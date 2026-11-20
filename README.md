@@ -13,6 +13,7 @@ It implements the "after" side of the canvas *Patient Pages Before and After*:
 | Slot Allocation | SR1 to SR4 | Patient Slot Review |
 | Added Nov 18 | SR5 to SR7 | Patient Slot Review: drag to a slot, lists that narrow to the selection, View (Cards, Compact, List, Matrix) |
 | Added Nov 20 | SR8, SR9 | Patient Slot Review: a patient and a slot selected at once; the app's optimizer |
+| Added Nov 20 | SR10 | Patient Slot Review: revert an accepted or placed slot after its steps are assigned |
 
 Turn on **Design notes** (top bar) to see each board's number next to the part of the screen it changed, with what it looked like before.
 
@@ -38,8 +39,15 @@ Everything you click is saved in your browser. **Settings (sliders icon) › Res
 
 - **Thursday, Nov 12, 2026**, the Thursday New Patient Meeting at *Demo Cancer Center*. Every date reads relative to that morning.
 - **Team** (switch with *Viewing as*): Dr. Anika Patel (PI), Dr. Sean Brennan (physician), Maya Reyes (CRC), Luis Tran (research RN).
-- **Trials**: SLV-417 (KRAS G12C, dose escalation and expansion), SOLVE-Lung 3 (previously treated NSCLC, arms by histology), SPX-201 (HER3 ADC: breast after or without a prior topo-I ADC, NSCLC cohort opening Dec 1), ctDNA-Guided Adjuvant Colon (randomized, whole trial).
-- **26 patients**, 20 of them in Thursday's review. Their diagnoses, stage, biomarkers and prior lines decide every match, so a breast patient never "fits" a KRAS G12C lung cohort.
+- **3 trials (Trial A, B and C), 3 cohorts each.** Only Cohort 1 is open, with 1 slot. Cohorts 2 and 3 are on hold with no date.
+  - Trial A › Cohort 1: any NSCLC after chemo-immunotherapy.
+  - Trial B › Cohort 1: non-squamous NSCLC without EGFR or ALK alterations, after chemo-immunotherapy.
+  - Trial C › Cohort 1: KRAS G12C NSCLC after chemo-immunotherapy. Trial C is the only trial that needs KRAS G12C.
+- **3 patients, all NSCLC after chemo-immunotherapy**, all in Thursday's review. Their stage, biomarkers and prior lines decide every match.
+  - *Priya Nair*, no mutations, is queued for Trial A (Oct 1).
+  - *Marcus Bell*, KRAS G12C, is queued for Trials A, B and C (Oct 14).
+  - *Eleanor Hughes*, no mutations, is queued for Trial B (Oct 21).
+- **Who blocks whom.** Only Bell fits Trial C, so the plan seats all three: Bell in C, Nair in A, Hughes in B. Moving Bell to A blocks Nair; moving him to B blocks Hughes.
 
 ### What is simplified
 
@@ -58,25 +66,25 @@ Everything you click is saved in your browser. **Settings (sliders icon) › Res
 
 Start from a reset. Viewing as Dr. Patel.
 
-1. **The board (SR1).** Patient Slot Review opens on the 8:14 AM snapshot. Tiles: 20 patients in review, 38 slots open now, 6 opening soon (plus one cohort on hold with no date), 3 patients blocked.
-2. **Select a patient, and why this slot (SR2, A5, SR9).** Click *Rossi, Elena*. Slots narrows to her four possible slots (proposed, on her queue, also fits), and Optimizer decisions to her proposal: SLV-417 › Cohort A. She is queued for SOLVE-Lung 3 › Arm A too, and the card says why not there: "placing Rossi, Elena there instead leaves Siddiqui, Bilal without a slot." The Interest List is a set, as in the app, so the plan seats all four patients who want Arm A or Cohort A.
-3. **A patient and a slot together (SR2, A3, SR8).** With Rossi still selected, click *SOLVE-Lung 3 › Arm A* in her list. It opens in place and Slots stays narrowed to her; Patients narrows to Arm A: Petrova, Mendoza and Siddiqui proposed, Okafor (accepted at SLV-417 last week) and Rossi placed elsewhere. The bar above the board shows both; the × on each clears just that one, Esc clears both.
-4. **Blocked, with the real reason (SR4, A4, A7).** Optimizer decisions › Blocked:
-   - Morgan is next in line for SPX-201 › Arm A2: its 4 open slots are proposed to patients who entered the pool earlier. SPX-201 › Dose Level 2 is open and fits her, and she is not queued for it (**Queue** would propose her there).
-   - Alvarez fits only SPX-201 › Arm A1, which has no open slot; one may come back Nov 24.
-   - Lindqvist was re-matched at Stage IIIC on Nov 6; SOLVE-Lung 3 needs Stage IV.
-5. **Dismiss with a reason (A6).** Tracking › *Feldman, Ruth* › Dismiss… › Patient declined, note "prefers to stay local". The toast says Morgan is proposed for Arm A2 now (New since snapshot). Feldman moves to Blocked as "Dismissed by the team" with her reason, so Blocked stays at 3. The header counts the dismissal.
-6. **Accept and assign (SR3).** Accept *Rossi*: the consent call goes to Maya R. (due Fri Nov 13), pre-screen labs to Luis T. after consent. The slot is held 7 days for consent (until Nov 19), so it appears in Near future as a slot that may come back.
-7. **The team after the meeting (SR3).** *Viewing as* Maya R., then *Assigned to: Me*: her consent calls for Okafor and Rossi. Expand Okafor's *Steps and trail* (last week's voicemail and call-back notes are there) and mark his call done: his labs step goes to Luis T. with a due date, and his "slot back Nov 19 without consent" line leaves Near future.
-8. **Near future (SR4).** Slots › Near future: Arm A1 may come back Nov 24 (Alvarez queued, Nguyen and Nair watching); SPX-201 › Cohort B opens Dec 1 (who fits and waits, or how many who fit are placed elsewhere now); SLV-417 › Cohort C is on hold with no date.
-9. **Names on a shared screen (A9).** Switch Names to *Meeting*: "Samuel O." and the last four of the MRN.
-10. **Drag a patient onto a slot (SR5).** Clear the selection (Esc) and drag *Rossi, Elena* by her card (say her patient prefers Arm A). On pickup, Slots narrows to the openings that fit her, each outlined; hover one and the label under the pointer says what letting go will do. Drop her on SOLVE-Lung 3 › Arm A: she is proposed for Cohort A, so it is **Place by hand**. The dialog shows the cost in patients (her Cohort A proposal is released; "Siddiqui, Bilal loses the proposal for SOLVE-Lung 3 › Arm A…"), asks why (Clinical urgency, Patient preference, PI decision, Other) and assigns the steps like Accept. Dropping a patient on the slot the optimizer proposed for them opens Accept; dropping one on a slot that cannot take them says why (Kowalski on a lung arm: "Not a fit: Colorectal cancer…"). Without a mouse, select the patient and use **Place here…** under a slot.
-11. **Lists narrow, and the View switch (SR6, SR7, SR8).** Select a patient: Slots and Optimizer decisions show only what applies to them, grouped (Proposed, On their queue, Also fits); select a slot and Patients shows who holds it, its proposals, who is next in line and who else is queued. **Show all** brings the rest back, dimmed. **View** above the board switches between Cards, Compact, List and Matrix. In Compact and List the selected patient opens as a full card. In Matrix every cell is one patient and one slot, both selections narrow it, and clicking a cell offers Accept, Dismiss, Place by hand or Queue.
-12. **Patients (01, 05).** Patients › My Patients, grouped by what needs Dr. Patel: Castillo (undeclared referral), Brooks (status changed to Stage IV), Whitfield (nothing queued), Lindqvist (no longer eligible), then Coming up and Nothing due.
-13. **Triage to the board (07, 03).** Open *Castillo, Ana*: the header asks whether she is looking for a trial. Choose Seeking. Trial Options › SLV-417 › Cohort A shows *Why this match* line by line. Queue her, then open Patient Slot Review: she is proposed for Cohort A.
-14. **Stale matches and watches (13, 10).** Open *Brooks, Lena*: Trial Options says her staging changed Nov 6, after the Nov 2 match. **Re-check now**: the SPX-201 openings move to Matches, and her watch reads STATUS CHANGED Stage IIA → IV. Keep… with a note, or Queue.
-15. **Profile (12, 09).** Update staging asks "new restaging or fix a mistake" and defaults the date accordingly. Labs flag HIGH and LOW against a reference range.
-16. **Questions for you.** The open decisions, each with where to look. Copy answers puts them on the clipboard.
+1. **The board (SR1).** Patient Slot Review opens on the 8:14 AM snapshot. Tiles: 3 patients in review, 3 slots open now, 0 opening soon (the 6 cohorts on hold have no date), 0 patients blocked: the plan seats everyone.
+2. **Why this slot (SR2, A5, SR9).** Click *Bell, Marcus*. Slots narrows to his possible slots: Trial C › Cohort 1 under Optimizer proposed slot, Trials A and B under Queued for Optimized Match. His proposal card says what each alternative would cost: "placing Bell, Marcus there instead leaves Nair, Priya without a slot" for Trial A, and Hughes, Eleanor for Trial B. Only he fits Trial C, so the plan puts him there.
+3. **A patient and a slot together (SR2, A3, SR8).** With Bell still selected, click *Trial A › Cohort 1* in his list. It opens in place and Slots stays narrowed to him. Patients narrows to Trial A › Cohort 1: Nair under Optimizer proposed patient, Bell under Also queued for Optimized Match. The bar above the board shows both selections; the × on each clears just that one, and Esc clears both.
+4. **Block Nair or Hughes (SR5).** Clear the selection (Esc) and drag *Bell, Marcus* by his card (say his patient prefers Trial A). On pickup, Slots narrows to the openings that fit him, each outlined. Hover one and the label under the pointer says what letting go will do. Drop him on Trial A › Cohort 1. He is proposed for Trial C, so it is **Place by hand**. The dialog shows the cost in patients: his Trial C proposal is released, and Nair loses her Trial A proposal and is blocked. Pick a reason (Clinical urgency, Patient preference, PI decision, Other) and place him. Blocked now shows Nair with "No open slot in the opening", and Trial B as open and a fit for her, though she isn't queued for it. Click **Undo** on the toast.
+   - Drop him on Trial B › Cohort 1 instead and Hughes is the one blocked.
+   - Without a mouse, select Bell and use **Place here…** under a slot.
+5. **Dismiss with a reason (A6).** Tracking › *Bell, Marcus* › Dismiss… › Patient declined. No one else fits Trial C, so the toast says no one is waiting for it. The plan moves Bell to Trial B, because he entered the pool before Hughes (Oct 14; Hughes Oct 21). Hughes becomes next in line there, and Blocked goes to 1. The header counts the dismissal. Click **Undo** on the toast before going on.
+6. **Accept and assign (SR3).** Accept *Bell*: the consent call goes to Maya R. (due Fri Nov 13), pre-screen labs to Luis T. after consent. The slot is held 7 days for consent (until Nov 19), so Slots › Near future shows it as a slot that may come back, next to the six cohorts on hold.
+7. **The team after the meeting (SR3).** *Viewing as* Maya R., then *Assigned to: Me*: Bell's consent call. Expand his *Steps and trail* and mark the call done. His labs step goes to Luis T. with a due date, and his "slot back Nov 19 without consent" line leaves Near future. **Undo** next to the call (or on the toast) puts all of that back; only the latest step done can be undone.
+8. **Revert after Accept (SR10).** Switch *Viewing as* back to Dr. Patel. Tracking › *Bell, Marcus* › **Revert…**. The dialog shows what is already done (the consent call) and which open steps it cancels (pre-screen labs, Luis T.), then asks what happens to Bell. *Back to the optimizer*: he is proposed for Trial C again. *Release and dismiss* with a reason: he is proposed for Trial B instead, because he entered the pool before Hughes, and Hughes becomes next in line. **Undo** on the toast puts the accepted slot and its steps back. Revert also works on a placement by hand: place Bell in Trial A as in step 4, then **Revert…** gives Nair her slot back. In Matrix, **Revert…** is on the accepted cell.
+9. **Names on a shared screen (A9).** Switch Names to *Meeting*: "Priya N." and the last four of the MRN.
+10. **Lists narrow, and the View switch (SR6, SR7, SR8).**
+    - Select a patient: Slots and Optimizer decisions show only what applies to them, grouped (Optimizer proposed slot, Queued for Optimized Match, Also fits, not queued).
+    - Select a slot: Patients shows who holds it, its proposals, who is next in line and who else is queued.
+    - **Show all** brings the rest back, dimmed.
+    - **View** above the board switches between Cards, Compact, List and Matrix. In Compact and List the selected patient opens as a full card. In Matrix every cell is one patient and one slot, both selections narrow it, and clicking a cell offers Accept, Dismiss, Place by hand or Queue.
+11. **Patients (01, 05).** Patients › My Patients, grouped by what needs Dr. Patel: Nair and Bell in today's review, each with their proposal. Hughes follows Dr. Brennan; switch *Viewing as* to see her.
+12. **Profile (12, 09).** Open a patient › Profile. Update staging asks "new restaging or fix a mistake" and defaults the date accordingly. Labs are shown against their reference range.
+13. **Questions for you.** The open decisions, each with where to look. Copy answers puts them on the clipboard.
 
 ## Publish to GitHub Pages, behind a password
 

@@ -347,9 +347,9 @@ function BoardHeader() {
           <Tooltip
             title={
               <Box sx={{ fontSize: 12.5, lineHeight: 1.5 }}>
-                <b>Full</b>: "Okafor, Samuel" and the MRN, as the board shows today.
+                <b>Full</b>: "Nair, Priya" and the MRN, as the board shows today.
                 <br />
-                <b>Meeting</b>: "Samuel O." and the last 4 of the MRN, for a projected screen.
+                <b>Meeting</b>: "Priya N." and the last 4 of the MRN, for a projected screen.
                 <br />
                 <b>Masked</b>: follows the Profile switch, like the Patients list.
               </Box>
@@ -493,7 +493,7 @@ function SelectionBar() {
     const queued = ov.candidates.filter((c) => c.status !== 'not_eligible').length;
     parts.push(
       <SelectionPart key="o" label={patientId ? ov.short : ov.full} onClear={ui.clearOpening} clearLabel={`Unselect ${ov.short}`}>
-        {ov.openNow} open · {queued} queued · {ov.fitNotQueued.length} fit, not queued
+        {ov.openNow} open · {queued} queued for Optimized Match · {ov.fitNotQueued.length} fit, not queued
       </SelectionPart>,
     );
   }

@@ -113,7 +113,7 @@ export function reviewStatusFor(
   }
   const dismissed = pairings.find((pr) => pr.patientId === p.id && pr.openingId === openingId && pr.status === 'dismissed');
   if (dismissed) return { text: `Dismissed: ${dismissReasonLabel(dismissed.dismissReason).toLowerCase()}`, tone: 'grey' };
-  if (view.decision?.kind === 'proposed' && view.decision.openingId === openingId) return { text: "Proposed in Thursday's review", tone: 'blue' };
+  if (view.decision?.kind === 'proposed' && view.decision.openingId === openingId) return { text: "Optimizer proposed slot in Thursday's review", tone: 'blue' };
   const ov = board.openingById[openingId];
   if (!ov) return undefined;
   if (ov.opening.state === 'on_hold') return { text: 'Opening on hold', tone: 'amber' };
@@ -123,7 +123,7 @@ export function reviewStatusFor(
     case 'not_eligible':
       return { text: 'Not eligible now', tone: 'red' };
     case 'placed_elsewhere':
-      return { text: 'Proposed for another of their slots', tone: 'grey' };
+      return { text: 'Optimizer proposed another of their slots', tone: 'grey' };
     case 'next_in_line':
     case 'queued':
       if (ov.openNow === 0) return { text: 'No open slot here', tone: 'red' };

@@ -44,11 +44,11 @@ export function PatientsColumn() {
       const pick = (ids: string[]) => ids.map((id) => board.patientById[id]).filter((v): v is PatientView => !!v && matchesQ(v));
       return [
         { key: 'holding', title: 'Holding a slot here', items: pick(narrow.holding) },
-        { key: 'proposed', title: 'Proposed here', items: pick(narrow.proposed) },
+        { key: 'proposed', title: 'Optimizer proposed patient', items: pick(narrow.proposed) },
         { key: 'line', title: 'Next in line', items: pick(narrow.nextInLine) },
-        { key: 'queued', title: 'Also queued here', items: pick(narrow.queued) },
+        { key: 'queued', title: 'Also queued for Optimized Match', items: pick(narrow.queued) },
         { key: 'fits', title: 'Fits, not queued', items: pick(narrow.fits) },
-        { key: 'ne', title: 'Queued, not eligible', items: pick(narrow.notEligible) },
+        { key: 'ne', title: 'Queued for Optimized Match, not eligible', items: pick(narrow.notEligible) },
       ];
     }
     const out: Record<SectionKey, PatientView[]> = { decide: [], blocked: [], none: [], progress: [], other: [] };
@@ -248,9 +248,9 @@ function PatientCard({ view: v, narrowed }: { view: PatientView; narrowed: boole
           </Muted>
           <Box sx={{ fontSize: 12.5 }}>{where}</Box>
           {p.queue.length && !v.fixedPairing ? (
-            <Muted size={12}>Queued: {p.queue.map((e) => labelFor(state.trials, e.openingId)).join('; ')}</Muted>
+            <Muted size={12}>Queued for Optimized Match: {p.queue.map((e) => labelFor(state.trials, e.openingId)).join('; ')}</Muted>
           ) : null}
-          {!p.queue.length && p.addedToReviewBy ? <Muted size={12}>Added by {member(p.addedToReviewBy).short}, nothing queued yet</Muted> : null}
+          {!p.queue.length && p.addedToReviewBy ? <Muted size={12}>Added by {member(p.addedToReviewBy).short}, nothing queued for Optimized Match yet</Muted> : null}
           {step?.assignee ? (
             <Row>
               <PersonTag userId={step.assignee} suffix={`· ${step.label.toLowerCase()}`} />

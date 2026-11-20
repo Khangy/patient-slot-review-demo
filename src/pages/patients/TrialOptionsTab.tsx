@@ -190,7 +190,7 @@ export function TrialOptionsTab({ view }: { view: PatientView }) {
               </>
             }
             note="04"
-            empty="Nothing queued yet."
+            empty="Nothing queued for Optimized Match yet."
           >
             {queueShown.map((e) => {
               const row = rowFor(e.openingId);
@@ -313,7 +313,7 @@ export function TrialOptionsTab({ view }: { view: PatientView }) {
                     <>
                       <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap', rowGap: 0.5 }}>
                         <Typography sx={{ fontWeight: 600, fontSize: 14 }}>{r.label}</Typography>
-                        {queued ? <ToneChip tone="teal" label="Queued" size="tiny" /> : null}
+                        {queued ? <ToneChip tone="teal" label="Queued for Optimized Match" size="tiny" /> : null}
                         {r.match.result === 'pending_review' ? <ToneChip tone="amber" label="Fit pending review" size="tiny" /> : null}
                       </Stack>
                       <Typography variant="caption" component="div" color="text.secondary">
@@ -534,7 +534,7 @@ function DetailPane({ row, view, onWatch, onQueue }: { row: OptionRow; view: Pat
               </>
             )}
             <Typography variant="caption" color="text.secondary">
-              {queuedCount} queued · {ov.watching.length} watching
+              {queuedCount} queued for Optimized Match · {ov.watching.length} watching
             </Typography>
           </Box>
         </Box>
