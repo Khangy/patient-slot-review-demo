@@ -11,7 +11,7 @@ import { AcceptDialog, DismissDialog, HandOffDialog, PlaceDialog, placeChangeLin
 // The board's decisions, opened from anywhere on it: a decision card, a matrix cell, a drop
 // onto a slot, or the "Place here" button. One set of dialogs, one set of toasts with Undo.
 
-export type Target = { patientId: string; openingId: string; choice: number };
+export type Target = { patientId: string; openingId: string };
 
 interface BoardActionsApi {
   accept(t: Target): void;
@@ -53,7 +53,7 @@ export function BoardActionsProvider({ children }: { children: ReactNode }) {
       tryPlace: (patientId, openingId) => {
         const c = placeCheck(latest.current.board, patientId, openingId);
         if (!c.ok) toast(`${latest.current.ui.nameOf(patientId)} → ${latest.current.board.openingById[openingId]?.short ?? 'this slot'}: ${c.reason}.`);
-        else if (c.kind === 'accept') setAccepting({ patientId, openingId, choice: c.choice });
+        else if (c.kind === 'accept') setAccepting({ patientId, openingId });
         else setPlacing({ patientId, openingId });
       },
     }),
@@ -63,7 +63,7 @@ export function BoardActionsProvider({ children }: { children: ReactNode }) {
   const confirmAccept = (plan: AcceptPlan) => {
     if (!accepting) return;
     const t = accepting;
-    actions.accept(t.patientId, t.openingId, t.choice, plan);
+    actions.accept(t.patientId, t.openingId, plan);
     setAccepting(null);
     toast(`Accepted. Consent call: ${member(plan.consentBy).short}, due ${fmtWeekday(plan.consentDue)}.`, {
       actionLabel: 'Undo',
@@ -93,15 +93,15 @@ export function BoardActionsProvider({ children }: { children: ReactNode }) {
       trials: state.trials,
       pairings: [
         ...state.pairings.filter((x) => !(x.patientId === t.patientId && x.openingId === t.openingId)),
-        { id: 'sim', patientId: t.patientId, openingId: t.openingId, status: 'dismissed', choice: t.choice, decidedAt: now(), decidedBy: me.id, steps: [], trail: [] },
+        { id: 'sim', patientId: t.patientId, openingId: t.openingId, status: 'dismissed', decidedAt: now(), decidedBy: me.id, steps: [], trail: [] },
       ],
     });
     const before = new Set(board.openingById[t.openingId]?.proposed ?? []);
     const moved = sim.openingById[t.openingId]?.proposed.find((pid) => !before.has(pid) && pid !== t.patientId);
-    actions.dismiss(t.patientId, t.openingId, t.choice, reason, note);
+    actions.dismiss(t.patientId, t.openingId, reason, note);
     setDismissing(null);
     const where = labelFor(state.trials, t.openingId);
-    toast(moved ? `Dismissed. ${ui.nameOf(moved)} moves up for ${where}.` : `Dismissed. No one else in line for ${where}.`, {
+    toast(moved ? `Dismissed. ${ui.nameOf(moved)} is proposed for ${where} now.` : `Dismissed. No one else is waiting for ${where}.`, {
       actionLabel: 'Undo',
       onAction: undoLatest(t.patientId, t.openingId, 'dismissed'),
     });

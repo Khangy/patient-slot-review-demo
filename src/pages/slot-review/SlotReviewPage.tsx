@@ -2,6 +2,7 @@ import {
   Box,
   Button,
   ButtonBase,
+  IconButton,
   Link,
   Paper,
   ListItemIcon,
@@ -17,6 +18,7 @@ import {
 } from '@mui/material';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import CheckIcon from '@mui/icons-material/Check';
+import CloseIcon from '@mui/icons-material/Close';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import GridOnIcon from '@mui/icons-material/GridOn';
 import ViewAgendaOutlinedIcon from '@mui/icons-material/ViewAgendaOutlined';
@@ -33,7 +35,8 @@ import { useStore } from '@/state/store';
 import { useToast } from '@/components/Toast';
 import { PersonAvatar, useTone, useTones, type ToneName } from '@/components/ui';
 import { DesignNote } from '@/notes/DesignNote';
-import { BoardUiContext, useBoardUi, type Assigned, type BoardUi, type DecisionsTab, type Selection, type SlotsTab } from './boardUi';
+import { BoardUiContext, useBoardUi, type Assigned, type BoardUi, type DecisionsTab, type SlotsTab } from './boardUi';
+import { pairApplies } from './reduce';
 import { PatientsColumn } from './PatientsColumn';
 import { SlotsColumn } from './SlotsColumn';
 import { DecisionsColumn } from './DecisionsColumn';
@@ -84,9 +87,10 @@ export function SlotReviewPage() {
     [setParams],
   );
 
-  const pid = params.get('patient');
-  const oid = params.get('opening');
-  const selection: Selection = pid && board.patientById[pid] ? { kind: 'patient', id: pid } : oid && board.openingById[oid] ? { kind: 'opening', id: oid } : null;
+  const pidParam = params.get('patient');
+  const oidParam = params.get('opening');
+  const selPid = pidParam && board.patientById[pidParam] ? pidParam : null;
+  const selOid = oidParam && board.openingById[oidParam] ? oidParam : null;
   const slotsTab: SlotsTab = params.get('slots') === 'soon' ? 'soon' : 'now';
   const decisionsTab: DecisionsTab = params.get('decisions') === 'blocked' ? 'blocked' : 'tracking';
   const assignedParam = params.get('assigned');
@@ -94,11 +98,19 @@ export function SlotReviewPage() {
 
   const ui = useMemo<BoardUi>(
     () => ({
-      selection,
-      selectPatient: (id) => setParam(selection?.kind === 'patient' && selection.id === id ? { patient: null, opening: null } : { patient: id, opening: null }),
+      selection: { patientId: selPid, openingId: selOid },
+      hasSelection: !!(selPid || selOid),
+      // SR8: a patient and a slot can be selected together; the other one stays only while it applies.
+      selectPatient: (id) =>
+        setParam(selPid === id ? { patient: null } : { patient: id, opening: selOid && pairApplies(board, id, selOid) ? selOid : null }),
       focusPatient: (id) => setParam({ patient: id, opening: null }),
       selectOpening: (id) =>
-        setParam(selection?.kind === 'opening' && selection.id === id ? { patient: null, opening: null } : { opening: id, patient: null, slots: null }),
+        setParam(
+          selOid === id ? { opening: null } : { opening: id, patient: selPid && pairApplies(board, selPid, id) ? selPid : null, slots: null },
+        ),
+      selectPair: (patientId, openingId) => setParam({ patient: patientId, opening: openingId, slots: null }),
+      clearPatient: () => setParam({ patient: null }),
+      clearOpening: () => setParam({ opening: null }),
       clearSelection: () => setParam({ patient: null, opening: null }),
       slotsTab,
       setSlotsTab: (t) => setParam({ slots: t === 'now' ? null : t }),
@@ -117,7 +129,7 @@ export function SlotReviewPage() {
       wide,
       view: settings.boardView ?? 'cards',
     }),
-    [selection?.kind, selection?.id, slotsTab, decisionsTab, assigned, board, settings.boardNames, settings.showPii, settings.boardView, wide, setParam],
+    [selPid, selOid, slotsTab, decisionsTab, assigned, board, settings.boardNames, settings.showPii, settings.boardView, wide, setParam],
   );
 
   useEffect(() => {
@@ -463,31 +475,26 @@ function SelectionBar() {
   const { board } = useStore();
   const ui = useBoardUi();
   const teal = useTone('teal');
-  const sel = ui.selection;
-  let content: ReactNode;
-  if (!sel) {
-    content = (
-      <Typography variant="body2" color="text.secondary">
-        Select a patient to light up their possible slots and decision, or a slot to see its candidates in order and who it would block.
-      </Typography>
-    );
-  } else if (sel.kind === 'patient') {
-    const v = board.patientById[sel.id];
-    content = (
-      <Typography variant="body2">
-        <b>Selected: {ui.nameOf(sel.id)}</b> · {v.possibleNow.length} possible slot{v.possibleNow.length === 1 ? '' : 's'} now · {v.possibleSoon.length} soon ·{' '}
-        <Link component={RouterLink} to={`/patients/${sel.id}?tab=options`}>
+  const { patientId, openingId } = ui.selection;
+  const parts: ReactNode[] = [];
+  if (patientId) {
+    const v = board.patientById[patientId];
+    parts.push(
+      <SelectionPart key="p" label={ui.nameOf(patientId)} onClear={ui.clearPatient} clearLabel={`Unselect ${ui.nameOf(patientId)}`}>
+        {v.possibleNow.length} possible slot{v.possibleNow.length === 1 ? '' : 's'} now · {v.possibleSoon.length} soon ·{' '}
+        <Link component={RouterLink} to={`/patients/${patientId}?tab=options`}>
           Open chart
         </Link>
-      </Typography>
+      </SelectionPart>,
     );
-  } else {
-    const ov = board.openingById[sel.id];
+  }
+  if (openingId) {
+    const ov = board.openingById[openingId];
     const queued = ov.candidates.filter((c) => c.status !== 'not_eligible').length;
-    content = (
-      <Typography variant="body2">
-        <b>Selected: {ov.full}</b> · {ov.openNow} open · {queued} queued · {ov.fitNotQueued.length} fit, not queued
-      </Typography>
+    parts.push(
+      <SelectionPart key="o" label={patientId ? ov.short : ov.full} onClear={ui.clearOpening} clearLabel={`Unselect ${ov.short}`}>
+        {ov.openNow} open · {queued} queued · {ov.fitNotQueued.length} fit, not queued
+      </SelectionPart>,
     );
   }
   return (
@@ -504,17 +511,61 @@ function SelectionBar() {
         minHeight: 40,
         borderRadius: 1.5,
         border: '1px solid',
-        borderColor: sel ? teal.border : 'divider',
-        bgcolor: sel ? teal.bg : 'transparent',
+        borderColor: ui.hasSelection ? teal.border : 'divider',
+        bgcolor: ui.hasSelection ? teal.bg : 'transparent',
       }}
     >
-      <Box sx={{ flex: 1, minWidth: 0 }}>{content}</Box>
+      <Box sx={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+        {parts.length ? (
+          parts
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            Select a patient to see their possible slots and decision, then one of their slots to open it without losing the patient. Or start from a slot to see who
+            it is proposed to and who is next in line.
+          </Typography>
+        )}
+        {patientId && !openingId ? (
+          <Typography variant="body2" color="text.secondary">
+            Pick one of their slots to open it here.
+          </Typography>
+        ) : null}
+      </Box>
       <DesignNote id="SR2" />
-      {sel ? (
+      <DesignNote id="SR8" />
+      {ui.hasSelection ? (
         <Button size="small" onClick={ui.clearSelection}>
           Clear (Esc)
         </Button>
       ) : null}
+    </Box>
+  );
+}
+
+/** One selected thing in the selection bar, with its own way to unselect it. */
+function SelectionPart({ label, onClear, clearLabel, children }: { label: string; onClear: () => void; clearLabel: string; children: ReactNode }) {
+  const teal = useTone('teal');
+  return (
+    <Box
+      sx={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 0.5,
+        minWidth: 0,
+        pl: 1,
+        pr: 0.25,
+        py: 0.25,
+        borderRadius: 1,
+        border: '1px solid',
+        borderColor: teal.border,
+        bgcolor: 'background.paper',
+      }}
+    >
+      <Typography variant="body2" component="span" sx={{ minWidth: 0 }}>
+        <b>{label}</b> · {children}
+      </Typography>
+      <IconButton size="small" aria-label={clearLabel} onClick={onClear} sx={{ p: 0.25 }}>
+        <CloseIcon sx={{ fontSize: 16 }} />
+      </IconButton>
     </Box>
   );
 }

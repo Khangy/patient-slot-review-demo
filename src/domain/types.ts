@@ -144,7 +144,7 @@ export interface Patient {
   priorTherapies: PriorTherapy[];
   labs: Lab[];
   followers: UserId[];
-  /** Interest List, in the patient's order of choice (max 3) */
+  /** Interest List (max 3). A set, as in the app: the order carries no preference. */
   queue: QueueEntry[];
   watches: Watch[];
   /** added to Thursday's review without anything queued */
@@ -218,7 +218,7 @@ export interface TrailEntry {
 
 export type DismissReason = 'patient_declined' | 'not_a_fit' | 'wrong_timing' | 'other';
 
-/** Why a patient was placed by hand, ahead of the optimizer's order (drag to a slot). */
+/** Why a patient was placed by hand, a deviation from the optimizer's plan (drag to a slot). */
 export type PlaceReason = 'clinical_urgency' | 'patient_preference' | 'pi_decision' | 'other';
 
 export interface Pairing {
@@ -226,7 +226,6 @@ export interface Pairing {
   patientId: string;
   openingId: string;
   status: 'accepted' | 'pre_screening' | 'dismissed';
-  choice: number; // 1 = the patient's first choice
   decidedAt: string;
   decidedBy: UserId;
   dismissReason?: DismissReason;

@@ -2,7 +2,7 @@ import type { Board, PatientView } from '@/domain/board';
 import { isFit } from '@/domain/matching';
 import type { Trial, UserId, Watch } from '@/domain/types';
 import { daysBetween, fmtShort, fmtWeekday, relDays, TODAY } from '@/domain/dates';
-import { labelFor, member, ordinal } from '@/domain/names';
+import { labelFor, member } from '@/domain/names';
 import { NOT_SEEKING_LABEL } from '@/state/store';
 import type { ToneName } from '@/components/ui';
 
@@ -152,7 +152,7 @@ export function nextStepFor(view: PatientView, board: Board, trials: Trial[], me
         group: 'coming_up',
         verb: "In Thursday's review",
         status: 'today',
-        sub: `Proposed: ${label(view.decision.openingId)}, ${ordinal(view.decision.choice)} choice`,
+        sub: `Proposed: ${label(view.decision.openingId)}`,
         tone: 'blue',
         sortDate: TODAY,
       };
@@ -160,7 +160,7 @@ export function nextStepFor(view: PatientView, board: Board, trials: Trial[], me
     if (view.blocked) {
       const soon = board.nearFuture.find((n) => view.blocked!.openingIds.includes(n.openingId) && n.date);
       const extra =
-        view.blocked.reason === 'outranked' ? ' · next in line' : soon ? ` · ${soon.title.charAt(0).toLowerCase()}${soon.title.slice(1)}` : '';
+        view.blocked.reason === 'seats_taken' ? '' : soon ? ` · ${soon.title.charAt(0).toLowerCase()}${soon.title.slice(1)}` : '';
       return {
         group: 'coming_up',
         verb: "In Thursday's review",

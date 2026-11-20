@@ -84,10 +84,10 @@ export function trialOpenNow(board: Board, trialId: string): number {
   return board.openings.filter((o) => o.trial.id === trialId).reduce((n, o) => n + o.openNow, 0);
 }
 
-/** Other eligible patients queued for this opening and still in line (not placed elsewhere). */
+/** Other eligible patients queued for this opening and still wanting it (not placed elsewhere). */
 export function othersQueued(ov: OpeningView, patientId: string): number {
   return ov.candidates.filter(
-    (c) => c.patientId !== patientId && (c.status === 'proposed' || c.status === 'reserve' || c.status === 'accepted' || c.status === 'pre_screening'),
+    (c) => c.patientId !== patientId && (c.status === 'proposed' || c.status === 'next_in_line' || c.status === 'queued' || c.status === 'accepted' || c.status === 'pre_screening'),
   ).length;
 }
 
@@ -123,9 +123,13 @@ export function reviewStatusFor(
     case 'not_eligible':
       return { text: 'Not eligible now', tone: 'red' };
     case 'placed_elsewhere':
-      return { text: 'Placed at another choice', tone: 'grey' };
-    case 'reserve':
-      return ov.openNow === 0 ? { text: 'No open slot here', tone: 'red' } : { text: 'Reserve: lost to a higher rank', tone: 'amber' };
+      return { text: 'Proposed for another of their slots', tone: 'grey' };
+    case 'next_in_line':
+    case 'queued':
+      if (ov.openNow === 0) return { text: 'No open slot here', tone: 'red' };
+      return c.status === 'next_in_line'
+        ? { text: `Next in line${c.inLine && c.inLine > 1 ? ` (${c.inLine})` : ''}: every open slot is proposed`, tone: 'amber' }
+        : { text: 'Every open slot is proposed to others', tone: 'amber' };
     default:
       return undefined;
   }

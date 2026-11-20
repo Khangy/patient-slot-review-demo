@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import type { Board, PatientView } from '@/domain/board';
-import type { Selection } from './boardUi';
 
 // Selecting a patient or a slot narrows the other lists to what applies to it, instead of
 // greying the rest out (SR6). "Show all" brings the rest back, dimmed as before, until the
-// selection changes.
+// selection that narrows that list changes.
 
 export type SectionKey = 'decide' | 'blocked' | 'none' | 'progress' | 'other';
 
@@ -36,21 +35,41 @@ export function openingsForPatient(board: Board, patientId: string): { theirs: s
   return { theirs, queued, fits, all: [...theirs, ...queued, ...fits] };
 }
 
-/** The patients in review who apply to an opening: its candidates in rank order, who holds a slot, who fits. */
-export function patientsForOpening(board: Board, openingId: string): { ranked: string[]; holding: string[]; fits: string[]; notEligible: string[]; all: string[] } {
-  const ov = board.openingById[openingId];
-  if (!ov) return { ranked: [], holding: [], fits: [], notEligible: [], all: [] };
-  const inReview = (pid: string) => !!board.patientById[pid]?.inReview;
-  const ranked = ov.candidates.filter((c) => c.status !== 'not_eligible').map((c) => c.patientId);
-  const holding = ov.fixed.map((f) => f.patientId).filter((pid) => !ranked.includes(pid));
-  const fits = ov.fitNotQueued.filter(inReview);
-  const notEligible = ov.candidates.filter((c) => c.status === 'not_eligible').map((c) => c.patientId);
-  return { ranked, holding, fits, notEligible, all: [...holding, ...ranked, ...fits, ...notEligible] };
+export interface ForOpening {
+  /** accepted or pre-screening here */
+  holding: string[];
+  proposed: string[];
+  nextInLine: string[];
+  /** queued and a fit, but proposed elsewhere or waiting */
+  queued: string[];
+  fits: string[];
+  notEligible: string[];
+  all: string[];
 }
 
-/** "Show all" for one column; it resets whenever the selection changes. */
-export function useShowAll(sel: Selection): [boolean, (v: boolean) => void] {
-  const key = sel ? `${sel.kind}:${sel.id}` : '';
-  const [s, set] = useState({ key, all: false });
-  return [s.key === key ? s.all : false, (all: boolean) => set({ key, all })];
+/** The patients in review who apply to an opening: who holds a slot, the proposals, next in line, the rest queued, who fits. */
+export function patientsForOpening(board: Board, openingId: string): ForOpening {
+  const ov = board.openingById[openingId];
+  if (!ov) return { holding: [], proposed: [], nextInLine: [], queued: [], fits: [], notEligible: [], all: [] };
+  const inReview = (pid: string) => !!board.patientById[pid]?.inReview;
+  const by = (...st: string[]) => ov.candidates.filter((c) => st.includes(c.status)).map((c) => c.patientId);
+  const holding = [...new Set([...ov.fixed.map((f) => f.patientId), ...by('accepted', 'pre_screening')])];
+  const proposed = by('proposed');
+  const nextInLine = by('next_in_line');
+  const queued = by('placed_elsewhere', 'queued', 'dismissed');
+  const fits = ov.fitNotQueued.filter(inReview);
+  const notEligible = by('not_eligible');
+  return { holding, proposed, nextInLine, queued, fits, notEligible, all: [...holding, ...proposed, ...nextInLine, ...queued, ...fits, ...notEligible] };
+}
+
+/** Does the slot apply to the patient, so both can stay selected? */
+export function pairApplies(board: Board, patientId: string, openingId: string): boolean {
+  return openingsForPatient(board, patientId).all.includes(openingId) || patientsForOpening(board, openingId).all.includes(patientId);
+}
+
+/** "Show all" for one column; it resets whenever the selection that narrows it changes. */
+export function useShowAll(key: string | null): [boolean, (v: boolean) => void] {
+  const k = key ?? '';
+  const [s, set] = useState({ key: k, all: false });
+  return [s.key === k ? s.all : false, (all: boolean) => set({ key: k, all })];
 }

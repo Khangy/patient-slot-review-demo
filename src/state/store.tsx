@@ -69,7 +69,21 @@ function loadState(): DemoState {
   } catch {
     // private window or blocked storage: start fresh
   }
-  return initState();
+  const fresh = initState();
+  // A new demo version starts from the new seed, but answers to the questions carry over.
+  try {
+    for (let v = STATE_VERSION - 1; v >= 1; v--) {
+      const old = window.localStorage.getItem(`psr-demo-state-v${v}`);
+      const feedback = old ? (JSON.parse(old) as Partial<DemoState>).feedback : undefined;
+      if (feedback && Object.keys(feedback).length) {
+        fresh.feedback = feedback;
+        break;
+      }
+    }
+  } catch {
+    // nothing to carry over
+  }
+  return fresh;
 }
 
 function log(s: DemoState, patientId: string, at: string, verb: string, text: string, by?: UserId) {
@@ -83,7 +97,6 @@ function acceptInto(
   me: UserId,
   patientId: string,
   openingId: string,
-  choice: number,
   plan: AcceptPlan,
   placedByHand?: Pairing['placedByHand'],
 ) {
@@ -92,7 +105,7 @@ function acceptInto(
   const labsWho = member(plan.labsBy).short;
   const where = labelFor(s.trials, openingId);
   const how = placedByHand
-    ? `Placed by hand at the meeting, ahead of the optimizer's order · ${placeReasonLabel(placedByHand.reason)}${placedByHand.note ? `: ${placedByHand.note}` : ''}.`
+    ? `Placed by hand at the meeting, a deviation from the optimizer's plan · ${placeReasonLabel(placedByHand.reason)}${placedByHand.note ? `: ${placedByHand.note}` : ''}.`
     : 'Accepted at the meeting.';
   const steps: Step[] = [
     { id: rid('st'), kind: 'accepted', label: placedByHand ? 'Placed at the meeting' : 'Accepted at the meeting', assignee: me, due: TODAY, doneAt: at, doneBy: me },
@@ -105,7 +118,6 @@ function acceptInto(
     patientId,
     openingId,
     status: 'accepted',
-    choice,
     decidedAt: at,
     decidedBy: me,
     holdUntil: addDays(TODAY, 7),
@@ -143,7 +155,6 @@ export interface Actions {
   setStatus(patientId: string, status: PatientStatus, reason?: NotSeekingReason): void;
   queue(patientId: string, openingId: string): QueueResult;
   unqueue(patientId: string, openingId: string): void;
-  reorderQueue(patientId: string, openingIds: string[]): void;
   addWatch(patientId: string, watch: Omit<Watch, 'id' | 'since' | 'nextReview'>): void;
   keepWatch(patientId: string, watchId: string, note: string | undefined, lookAgainInDays: number): void;
   stopWatch(patientId: string, watchId: string): void;
@@ -155,10 +166,10 @@ export interface Actions {
   addToReview(patientId: string): void;
   removeFromReview(patientId: string): void;
 
-  accept(patientId: string, openingId: string, choice: number, plan: AcceptPlan): void;
+  accept(patientId: string, openingId: string, plan: AcceptPlan): void;
   /** Drag to a slot: places the patient ahead of the optimizer's order, with a reason. */
   place(patientId: string, openingId: string, plan: AcceptPlan, reason: PlaceReason, note?: string): void;
-  dismiss(patientId: string, openingId: string, choice: number, reason: DismissReason, note?: string): void;
+  dismiss(patientId: string, openingId: string, reason: DismissReason, note?: string): void;
   undoPairing(pairingId: string): void;
   completeStep(pairingId: string, stepId: string): void;
   handOff(pairingId: string, stepId: string, to: UserId, note?: string, due?: string): void;
@@ -271,7 +282,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const ended = p.watches.filter((w) => w.trialId === trialId && (!w.openingId || w.openingId === openingId));
           ended.forEach(() => log(s, p.id, at, 'WATCH ENDED', `${label}: queued instead`, me));
           p.watches = p.watches.filter((w) => !ended.includes(w));
-          log(s, p.id, at, 'QUEUED', `${label} (choice ${p.queue.length}) for Optimized Match`, me);
+          log(s, p.id, at, 'QUEUED', `${label} for Optimized Match`, me);
         });
         return { ok: true, message: `Queued for ${label}. Thursday's review picks it up.` };
       },
@@ -281,13 +292,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const p = patientIn(s, patientId);
           p.queue = p.queue.filter((e) => e.openingId !== openingId);
           log(s, p.id, at, 'REMOVED FROM QUEUE', name(s, openingId), me);
-        }),
-
-      reorderQueue: (patientId, openingIds) =>
-        mutate((s, at, me) => {
-          const p = patientIn(s, patientId);
-          p.queue = openingIds.map((oid) => p.queue.find((e) => e.openingId === oid)!).filter(Boolean);
-          log(s, p.id, at, 'QUEUE REORDERED', p.queue.map((e, i) => `${i + 1}. ${name(s, e.openingId)}`).join('  '), me);
         }),
 
       addWatch: (patientId, watch) =>
@@ -392,7 +396,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           log(s, p.id, at, 'REMOVED FROM REVIEW', "Thursday's Patient Slot Review", me);
         }),
 
-      accept: (patientId, openingId, choice, plan) => mutate((s, at, me) => acceptInto(s, at, me, patientId, openingId, choice, plan)),
+      accept: (patientId, openingId, plan) => mutate((s, at, me) => acceptInto(s, at, me, patientId, openingId, plan)),
 
       place: (patientId, openingId, plan, reason, note) =>
         mutate((s, at, me) => {
@@ -402,11 +406,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             p.status = 'seeking';
             p.statusSince = TODAY;
           }
-          const choice = p.queue.findIndex((e) => e.openingId === openingId) + 1;
-          acceptInto(s, at, me, patientId, openingId, choice, plan, { reason, note: note?.trim() || undefined });
+          acceptInto(s, at, me, patientId, openingId, plan, { reason, note: note?.trim() || undefined });
         }),
 
-      dismiss: (patientId, openingId, choice, reason, note) =>
+      dismiss: (patientId, openingId, reason, note) =>
         mutate((s, at, me) => {
           s.pairings = s.pairings.filter((pr) => !(pr.patientId === patientId && pr.openingId === openingId));
           const text = `${dismissReasonLabel(reason)}${note?.trim() ? `: ${note.trim()}` : ''}`;
@@ -415,7 +418,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             patientId,
             openingId,
             status: 'dismissed',
-            choice,
             decidedAt: at,
             decidedBy: me,
             dismissReason: reason,

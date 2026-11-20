@@ -1,11 +1,9 @@
-import { Box, Button, ButtonBase, Collapse, Divider, IconButton, Link, Paper, Stack, Tooltip, Typography } from '@mui/material';
+import { Box, Button, ButtonBase, Collapse, Divider, Link, Paper, Stack, Tooltip, Typography } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { useMemo, useState, type ReactNode } from 'react';
@@ -13,7 +11,7 @@ import type { PatientView } from '@/domain/board';
 import type { Watch } from '@/domain/types';
 import { isFit, type CheckOutcome } from '@/domain/matching';
 import { daysBetween, fmtShort, fmtWeekday, relDays, TODAY } from '@/domain/dates';
-import { labelFor, openingOwnName, openingShort, ordinal } from '@/domain/names';
+import { labelFor, openingOwnName, openingShort } from '@/domain/names';
 import { MAX_QUEUE, useStore } from '@/state/store';
 import { useToast } from '@/components/Toast';
 import { LogLine, Mono, Overline, PersonTag, ToneChip, useTone, useTones } from '@/components/ui';
@@ -107,14 +105,13 @@ export function TrialOptionsTab({ view }: { view: PatientView }) {
   const selRow = selected ? rowFor(selected) : undefined;
   const stale = !!p.matchBasis;
   const queuedIds = p.queue.map((e) => e.openingId);
-
-  const move = (index: number, dir: -1 | 1) => {
-    const ids = [...queuedIds];
-    const j = index + dir;
-    if (j < 0 || j >= ids.length) return;
-    [ids[index], ids[j]] = [ids[j], ids[index]];
-    actions.reorderQueue(p.id, ids);
-  };
+  // The Interest List is a set, as in the app: no order of choice. Listed like the app's
+  // Trial Options: a held slot first, then the most open slots.
+  const queueShown = [...p.queue].sort(
+    (a, b) =>
+      Number(view.fixedPairing?.openingId === b.openingId) - Number(view.fixedPairing?.openingId === a.openingId) ||
+      (board.openingById[b.openingId]?.openNow ?? 0) - (board.openingById[a.openingId]?.openNow ?? 0),
+  );
 
   const doQueue = (openingId: string) => {
     const r = actions.queue(p.id, openingId);
@@ -195,7 +192,7 @@ export function TrialOptionsTab({ view }: { view: PatientView }) {
             note="04"
             empty="Nothing queued yet."
           >
-            {p.queue.map((e, i) => {
+            {queueShown.map((e) => {
               const row = rowFor(e.openingId);
               const rs = reviewStatusFor(view, e.openingId, board, state.pairings);
               return (
@@ -203,11 +200,6 @@ export function TrialOptionsTab({ view }: { view: PatientView }) {
                   key={e.openingId}
                   selected={selected === e.openingId}
                   onSelect={() => setSelected(e.openingId)}
-                  lead={
-                    <Typography sx={{ fontWeight: 700, color: 'text.secondary', minWidth: 30, fontSize: 13 }} aria-label={`${ordinal(i + 1)} choice`}>
-                      {ordinal(i + 1)}
-                    </Typography>
-                  }
                   main={
                     <>
                       <Typography sx={{ fontWeight: 600, fontSize: 14 }}>{row?.label ?? labelFor(trials, e.openingId)}</Typography>
@@ -221,12 +213,6 @@ export function TrialOptionsTab({ view }: { view: PatientView }) {
                   }
                   actions={
                     <>
-                      <IconButton size="small" aria-label={`Move ${row?.label ?? 'this'} up`} disabled={i === 0} onClick={() => move(i, -1)}>
-                        <KeyboardArrowUpIcon fontSize="small" />
-                      </IconButton>
-                      <IconButton size="small" aria-label={`Move ${row?.label ?? 'this'} down`} disabled={i === p.queue.length - 1} onClick={() => move(i, 1)}>
-                        <KeyboardArrowDownIcon fontSize="small" />
-                      </IconButton>
                       <Button
                         size="small"
                         color="inherit"
@@ -473,7 +459,7 @@ function DetailPane({ row, view, onWatch, onQueue }: { row: OptionRow; view: Pat
   const resultMeta = MATCH[match.result];
 
   let blocker: string | undefined;
-  if (queued) blocker = `Queued (${ordinal(queuedIdx + 1)} choice)`;
+  if (queued) blocker = 'Queued for Optimized Match';
   else if (p.status === 'not_seeking') blocker = 'Not seeking: change the status to queue';
   else if (match.result === 'needs_status_change') blocker = `Needs ${match.needs} first: watch it instead`;
   else if (!isFit(match)) blocker = 'Not a fit on the last check';
@@ -484,7 +470,7 @@ function DetailPane({ row, view, onWatch, onQueue }: { row: OptionRow; view: Pat
     (p.status !== 'seeking'
       ? 'Queueing also marks the patient Seeking.'
       : ov.openNow === 0
-        ? 'No open slot now; queueing keeps the patient in line for one.'
+        ? 'No open slot now; queueing keeps the patient waiting for one.'
         : "Thursday's review picks it up.");
 
   const outcomeColor = (o: CheckOutcome) => (o === 'met' ? tones.green.fg : o === 'not_met' ? tones.red.fg : tones.amber.fg);
@@ -621,7 +607,7 @@ function DetailPane({ row, view, onWatch, onQueue }: { row: OptionRow; view: Pat
                 {cost
                   ? cost.startsWith('1 ')
                     ? 'Placing this patient here could leave that patient without a slot that fits them.'
-                    : `They are in line for the same ${ov.openNow} open slot${ov.openNow === 1 ? '' : 's'}; the optimizer places by rank.`
+                    : `They want the same ${ov.openNow} open slot${ov.openNow === 1 ? '' : 's'}. The optimizer seats as many patients as it can; ties go to whoever entered the pool first.`
                   : 'Every other waiting patient can still be placed.'}
               </Typography>
             </Box>

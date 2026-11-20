@@ -336,7 +336,7 @@ const PATIENTS: Patient[] = [
     biomarkers: lungMarkers('2025-07-01', 'G12C detected', 5, { krasActionable: true }),
     prior: [chemoIO('2025-07-08', '2026-09-15')],
     followers: ['u-patel'],
-    queue: [q('solve-a', '2026-10-01')],
+    queue: [q('solve-a', '2026-10-01'), q('slv-a', '2026-10-01')],
   }),
   patient({
     id: 'p-petrova', mrn: 'LP-0015', last: 'Petrova', first: 'Irina', sex: 'F', dob: '1966-09-03', referredOn: '2026-10-02', statusSince: '2026-10-03',
@@ -627,7 +627,6 @@ const PAIRINGS: Pairing[] = [
     patientId: 'p-okafor',
     openingId: 'slv-dl3',
     status: 'accepted',
-    choice: 1,
     decidedAt: '2026-11-05T08:22',
     decidedBy: 'u-patel',
     holdUntil: '2026-11-19',
@@ -649,7 +648,6 @@ const PAIRINGS: Pairing[] = [
     patientId: 'p-tanaka',
     openingId: 'solve-b',
     status: 'pre_screening',
-    choice: 1,
     decidedAt: '2026-10-29T08:19',
     decidedBy: 'u-patel',
     steps: [
@@ -695,9 +693,7 @@ function seedActivity(patients: Patient[], trials: Trial[]): ActivityEntry[] {
       const reason = p.notSeekingReason === 'comfort_care' ? ' · Hospice or comfort care' : '';
       out.push(act(p.id, `${p.statusSince}T10:00`, 'STATUS SET', `${label}${reason}`, p.followers[0]));
     }
-    p.queue.forEach((e, i) =>
-      out.push(act(p.id, `${e.queuedOn}T10:30`, 'QUEUED', `${openingName(e.openingId)} (choice ${i + 1}) for Optimized Match`, e.queuedBy)),
-    );
+    p.queue.forEach((e) => out.push(act(p.id, `${e.queuedOn}T10:30`, 'QUEUED', `${openingName(e.openingId)} for Optimized Match`, e.queuedBy)));
     p.watches.forEach((w) => {
       const what = w.reason === 'slot' ? 'waiting for a slot' : `waiting for status change to ${w.waitFor}`;
       const where = w.openingId ? openingName(w.openingId) : `${trials.find((t) => t.id === w.trialId)?.short} (any opening)`;
@@ -718,7 +714,7 @@ function seedActivity(patients: Patient[], trials: Trial[]): ActivityEntry[] {
   return out.sort((a, b) => (a.at < b.at ? 1 : -1));
 }
 
-export const STATE_VERSION = 4;
+export const STATE_VERSION = 5;
 
 /** A fresh demo state. The meeting snapshot is filled in by the store (it needs the allocator). */
 export function freshState(): Omit<DemoState, 'snapshot'> {

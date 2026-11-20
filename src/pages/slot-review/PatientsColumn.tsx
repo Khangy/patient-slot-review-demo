@@ -21,9 +21,9 @@ export function PatientsColumn() {
   const ui = useBoardUi();
   const [q, setQ] = useState('');
   const [addOpen, setAddOpen] = useState(false);
-  const [showAll, setShowAll] = useShowAll(ui.selection);
+  const { patientId: selPid, openingId: selOid } = ui.selection;
+  const [showAll, setShowAll] = useShowAll(selOid);
   const ref = useRef<HTMLElement>(null);
-  const sel = ui.selection;
   const list = ui.view === 'list';
 
   const inReview = useMemo(() => board.patients.filter((v) => v.inReview).sort((a, b) => a.patient.last.localeCompare(b.patient.last)), [board]);
@@ -35,15 +35,18 @@ export function PatientsColumn() {
   };
   const views = inReview.filter(matchesQ);
 
-  // A selected slot narrows this list to the patients it applies to, in rank order (SR6).
-  const forOpening = sel?.kind === 'opening' ? patientsForOpening(board, sel.id) : null;
+  // A selected slot narrows this list to the patients it applies to (SR6): who holds it, the
+  // proposals, who is next in line, and everyone else queued or fitting.
+  const forOpening = selOid ? patientsForOpening(board, selOid) : null;
   const narrow = forOpening && !showAll ? forOpening : null;
   const groups: { key: string; title: string; items: PatientView[] }[] = (() => {
     if (narrow) {
       const pick = (ids: string[]) => ids.map((id) => board.patientById[id]).filter((v): v is PatientView => !!v && matchesQ(v));
       return [
         { key: 'holding', title: 'Holding a slot here', items: pick(narrow.holding) },
-        { key: 'ranked', title: 'Candidates in rank order', items: pick(narrow.ranked) },
+        { key: 'proposed', title: 'Proposed here', items: pick(narrow.proposed) },
+        { key: 'line', title: 'Next in line', items: pick(narrow.nextInLine) },
+        { key: 'queued', title: 'Also queued here', items: pick(narrow.queued) },
         { key: 'fits', title: 'Fits, not queued', items: pick(narrow.fits) },
         { key: 'ne', title: 'Queued, not eligible', items: pick(narrow.notEligible) },
       ];
@@ -54,13 +57,10 @@ export function PatientsColumn() {
   })();
 
   useEffect(() => {
-    if (!ui.wide || !sel || isDragging()) return;
-    const target =
-      sel.kind === 'patient'
-        ? ref.current?.querySelector(`[data-pid="${sel.id}"]`)
-        : ref.current?.querySelector('[data-bright="true"]');
+    if (!ui.wide || (!selPid && !selOid) || isDragging()) return;
+    const target = selPid ? ref.current?.querySelector(`[data-pid="${selPid}"]`) : ref.current?.querySelector('[data-bright="true"]');
     target?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [sel, ui.wide]);
+  }, [selPid, selOid, ui.wide]);
 
   const shownCount = groups.reduce((n, g) => n + g.items.length, 0);
 
@@ -98,7 +98,7 @@ export function PatientsColumn() {
           shown={forOpening.all.length}
           total={inReview.length}
           noun="patients"
-          who={board.openingById[sel!.id]?.short ?? ''}
+          who={board.openingById[selOid!]?.short ?? ''}
           all={showAll}
           onToggle={setShowAll}
         />
@@ -130,20 +130,20 @@ function PatientCard({ view: v, narrowed }: { view: PatientView; narrowed: boole
   const drag = useDrag();
   const tones = useTones();
   const p = v.patient;
-  const sel = ui.selection;
-  const selected = sel?.kind === 'patient' && sel.id === p.id;
+  const { patientId: selPid, openingId: selOid } = ui.selection;
+  const selected = selPid === p.id;
 
   // Opening selected: its candidates and fits-not-queued get a pill (SR2); with the list
   // narrowed to them nothing is dimmed (SR6), with "Show all" the rest dims as before.
   let pill: { label: string; tone: ToneName } | undefined;
   let dim = false;
-  if (sel?.kind === 'opening') {
-    const ov = board.openingById[sel.id];
+  if (selOid) {
+    const ov = board.openingById[selOid];
     const cand = ov?.candidates.find((c) => c.patientId === p.id);
     const held = ov?.fixed.find((f) => f.patientId === p.id);
     if (cand) {
       const meta = CANDIDATE[cand.status];
-      pill = { label: cand.rank ? `#${cand.rank} ${meta.label}` : meta.label, tone: meta.tone };
+      pill = { label: cand.inLine && cand.inLine > 1 ? `${meta.label} · ${cand.inLine}` : meta.label, tone: meta.tone };
     } else if (held) pill = { label: held.status === 'accepted' ? 'Accepted here' : 'Pre-screening here', tone: held.status === 'accepted' ? 'green' : 'purple' };
     else if (ov?.fitNotQueued.includes(p.id)) pill = { label: 'Fits, not queued', tone: 'teal' };
     else dim = !narrowed;
@@ -178,7 +178,9 @@ function PatientCard({ view: v, narrowed }: { view: PatientView; narrowed: boole
     data: { 'data-pid': p.id, 'data-bright': pill ? 'true' : 'false' },
   };
 
-  if (ui.view === 'list') {
+  // Compact and List keep everyone short; the selected patient opens as a full card so the
+  // team sees what it needs to decide (SR8).
+  if (ui.view === 'list' && !selected) {
     return (
       <CardButton {...common} variant="row">
         <Box sx={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr) auto', alignItems: 'center', columnGap: 0.75 }}>
@@ -196,7 +198,7 @@ function PatientCard({ view: v, narrowed }: { view: PatientView; narrowed: boole
     );
   }
 
-  if (ui.view === 'compact') {
+  if (ui.view === 'compact' && !selected) {
     return (
       <CardButton {...common} dense>
         <Box sx={{ display: 'flex', gap: 0.75 }}>
@@ -227,7 +229,7 @@ function PatientCard({ view: v, narrowed }: { view: PatientView; narrowed: boole
   }
 
   return (
-    <CardButton {...common}>
+    <CardButton {...common} variant={ui.view === 'list' ? 'row' : 'card'} sx={ui.view === 'list' ? { py: 1.25 } : undefined}>
       <Box sx={{ display: 'flex', gap: 0.75 }}>
         {grip}
         <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.5 }}>

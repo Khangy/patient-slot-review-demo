@@ -5,7 +5,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Link as RouterLink, useNavigate, useParams, useSearchParams } from 'react-router';
 import type { PatientView } from '@/domain/board';
 import { fmtWeekday, relDays } from '@/domain/dates';
-import { labelFor, member, ordinal } from '@/domain/names';
+import { labelFor, member } from '@/domain/names';
 import { useStore } from '@/state/store';
 import { PersonTag, ToneChip, useTone } from '@/components/ui';
 import { BOARD_STATUS } from '@/components/statusMeta';
@@ -58,7 +58,7 @@ function ReviewStrip({ view }: { view: PatientView }) {
   } else if (view.decision?.kind === 'proposed') {
     body = (
       <Typography variant="body2">
-        <b>Proposed:</b> {label(view.decision.openingId)} · {ordinal(view.decision.choice)} choice. The team accepts or dismisses it at the meeting.
+        <b>Proposed:</b> {label(view.decision.openingId)}. The team accepts or dismisses it at the meeting.
       </Typography>
     );
   } else if (view.blocked) {

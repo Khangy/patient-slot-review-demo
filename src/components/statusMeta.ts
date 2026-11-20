@@ -25,15 +25,16 @@ export const CANDIDATE: Record<CandidateStatus, { label: string; tone: ToneName 
   accepted: { label: 'Accepted', tone: 'green' },
   pre_screening: { label: 'Pre-screening', tone: 'purple' },
   proposed: { label: 'Proposed', tone: 'blue' },
+  next_in_line: { label: 'Next in line', tone: 'amber' },
   placed_elsewhere: { label: 'Placed elsewhere', tone: 'grey' },
-  reserve: { label: 'Reserve', tone: 'amber' },
+  queued: { label: 'Queued', tone: 'grey' },
   dismissed: { label: 'Dismissed', tone: 'grey' },
   not_eligible: { label: 'Not eligible', tone: 'red' },
 };
 
 export const BLOCKED: Record<BlockedReason, { tone: ToneName }> = {
   no_slot_in_opening: { tone: 'red' },
-  outranked: { tone: 'red' },
+  seats_taken: { tone: 'amber' },
   no_longer_eligible: { tone: 'red' },
   dismissed: { tone: 'grey' },
 };

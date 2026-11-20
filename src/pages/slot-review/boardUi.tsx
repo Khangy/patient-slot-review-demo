@@ -3,21 +3,35 @@ import type { BoardView, Pairing, Step, UserId } from '@/domain/types';
 import { daysBetween, fmtWeekday, TODAY } from '@/domain/dates';
 import type { ToneName } from '@/components/ui';
 
-// Board-wide UI state for Patient Slot Review: the one selection that drives all three columns
+// Board-wide UI state for Patient Slot Review: the selection that drives all three columns
 // (SR2), the column tabs, and the "Assigned to" filter (SR3). Kept in the URL by the page.
+//
+// The selection holds a patient and a slot at the same time (SR8). A selected patient narrows
+// Slots; a selected slot narrows Patients. Picking one of the patient's slots keeps the patient,
+// so the list stays narrowed and the slot opens inside it.
 
-export type Selection = { kind: 'patient' | 'opening'; id: string } | null;
+export interface Selection {
+  patientId: string | null;
+  openingId: string | null;
+}
 export type SlotsTab = 'now' | 'soon';
 export type DecisionsTab = 'tracking' | 'blocked';
 export type Assigned = 'everyone' | UserId;
 
 export interface BoardUi {
   selection: Selection;
-  /** toggles: selecting the selected patient again clears the selection */
+  /** anything selected */
+  hasSelection: boolean;
+  /** toggles the patient; keeps the selected slot when it applies to them */
   selectPatient(id: string): void;
-  /** selects without toggling (drag start) */
+  /** selects the patient alone, without toggling (drag start) */
   focusPatient(id: string): void;
+  /** toggles the slot; keeps the selected patient when it applies to them */
   selectOpening(id: string): void;
+  /** selects both (a Matrix cell) */
+  selectPair(patientId: string, openingId: string): void;
+  clearPatient(): void;
+  clearOpening(): void;
   clearSelection(): void;
   slotsTab: SlotsTab;
   setSlotsTab(t: SlotsTab): void;

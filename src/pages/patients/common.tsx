@@ -6,7 +6,7 @@ import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined
 import { Link as RouterLink } from 'react-router';
 import type { Board, PatientView } from '@/domain/board';
 import type { Patient, Trial } from '@/domain/types';
-import { labelFor, listMrn, listName, ordinal } from '@/domain/names';
+import { labelFor, listMrn, listName } from '@/domain/names';
 import { NOT_SEEKING_LABEL, useStore } from '@/state/store';
 import { Mono, useTone, type ToneName } from '@/components/ui';
 import { PATIENT_STATUS } from '@/components/statusMeta';
@@ -102,7 +102,7 @@ export function statusSummary(view: PatientView, board: Board, trials: Trial[]):
   } else if (p.status === 'not_seeking') {
     sub = p.notSeekingReason ? NOT_SEEKING_LABEL[p.notSeekingReason] : undefined;
   } else if (view.decision?.kind === 'proposed') {
-    sub = `Proposed · ${label(view.decision.openingId)} (${ordinal(view.decision.choice)} choice)`;
+    sub = `Proposed · ${label(view.decision.openingId)}`;
   } else if (view.blocked) {
     sub = `Blocked · ${view.blocked.label.toLowerCase()}`;
   } else if (p.queue.length) {

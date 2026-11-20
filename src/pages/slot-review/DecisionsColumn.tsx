@@ -3,9 +3,9 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import type { Step } from '@/domain/types';
-import { dismissReasonLabel, placeReasonLabel, type Blocked, type Decision } from '@/domain/board';
+import { alternativesFor, dismissReasonLabel, placeReasonLabel, type Blocked, type Decision } from '@/domain/board';
 import { fmtWeekday, fmtWhen } from '@/domain/dates';
-import { findOpening, labelFor, member, ordinal } from '@/domain/names';
+import { findOpening, labelFor, member } from '@/domain/names';
 import { useStore } from '@/state/store';
 import { useToast } from '@/components/Toast';
 import { PersonTag, ToneChip, useTones, type ToneName } from '@/components/ui';
@@ -22,23 +22,22 @@ export function DecisionsColumn() {
   const { state, board, me } = useStore();
   const ui = useBoardUi();
   const ref = useRef<HTMLElement>(null);
-  const [showAll, setShowAll] = useShowAll(ui.selection);
   const list = ui.view === 'list';
   const dense = ui.view !== 'cards';
 
-  const sel = ui.selection;
-  const narrow = !!sel && !showAll;
+  // The patient narrows this column when one is selected, else the slot (SR6, SR8).
+  const { patientId: selPid, openingId: selOid } = ui.selection;
+  const [showAll, setShowAll] = useShowAll(selPid ?? selOid);
+  const sel = ui.hasSelection;
+  const narrow = sel && !showAll;
   useEffect(() => {
     if (!ui.wide || !sel || isDragging()) return;
-    const target =
-      sel.kind === 'patient'
-        ? ref.current?.querySelector(`[data-dpid="${sel.id}"]`)
-        : ref.current?.querySelector(`[data-doid="${sel.id}"]`);
+    const target = selPid ? ref.current?.querySelector(`[data-dpid="${selPid}"]`) : ref.current?.querySelector(`[data-doid="${selOid}"]`);
     target?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [sel, ui.wide, ui.decisionsTab]);
+  }, [sel, selPid, selOid, ui.wide, ui.decisionsTab]);
 
-  const applies = (patientId: string, openingIds: string[]) => !sel || (sel.kind === 'patient' ? sel.id === patientId : openingIds.includes(sel.id));
-  const selName = !sel ? '' : sel.kind === 'patient' ? ui.nameOf(sel.id) : board.openingById[sel.id]?.short ?? '';
+  const applies = (patientId: string, openingIds: string[]) => (selPid ? selPid === patientId : selOid ? openingIds.includes(selOid) : true);
+  const selName = selPid ? ui.nameOf(selPid) : selOid ? (board.openingById[selOid]?.short ?? '') : '';
 
   // Tracking, filtered by "Assigned to" (SR3)
   const filtered = useMemo(() => {
@@ -133,10 +132,10 @@ export function DecisionsColumn() {
           {filtered.length > 0 && visible.length === 0 ? (
             <Muted>
               No decisions for {selName} yet.
-              {sel?.kind === 'patient' && board.patientById[sel.id]?.blocked ? (
+              {selPid && board.patientById[selPid]?.blocked ? (
                 <>
                   {' '}
-                  {board.patientById[sel.id]?.blocked?.label}:{' '}
+                  {board.patientById[selPid]?.blocked?.label}:{' '}
                   <Link component="button" type="button" variant="body2" onClick={() => ui.setDecisionsTab('blocked')} sx={{ verticalAlign: 'baseline' }}>
                     see Blocked
                   </Link>
@@ -175,13 +174,37 @@ export function DecisionsColumn() {
   );
 }
 
-/** Highlight / dim a card from the board's one selection (SR2). */
+/** Highlight / dim a card from the board's selection (SR2). Narrowed, the selected pairing stands out. */
 function useSelectionState(patientId: string, openingIds: string[], narrowed: boolean) {
-  const ui = useBoardUi();
-  const sel = ui.selection;
-  if (!sel || narrowed) return { selected: false, dim: false };
-  const hit = sel.kind === 'patient' ? sel.id === patientId : openingIds.includes(sel.id);
+  const { patientId: selPid, openingId: selOid } = useBoardUi().selection;
+  if (!selPid && !selOid) return { selected: false, dim: false };
+  if (narrowed) return { selected: !!selPid && !!selOid && selPid === patientId && openingIds.includes(selOid), dim: false };
+  const hit = selPid ? selPid === patientId : openingIds.includes(selOid!);
   return { selected: hit, dim: !hit };
+}
+
+/**
+ * A5, "why this slot": the patient's other queued open slots, and who would be left without a
+ * slot if the team placed them there instead. The app's plan is the one that seats the most.
+ */
+function WhyThisSlot({ d }: { d: Decision }) {
+  const { state, board, me, now } = useStore();
+  const ui = useBoardUi();
+  const alts = useMemo(() => alternativesFor(state, board, d.patientId, me.id, now()), [state, board, d.patientId, me.id, now]);
+  if (!alts.length) return null;
+  const who = ui.nameOf(d.patientId);
+  return (
+    <Box sx={{ fontSize: 12, lineHeight: 1.45, color: 'text.secondary' }}>
+      {alts.map((a) => (
+        <Box key={a.openingId}>
+          Also queued for <b>{labelFor(state.trials, a.openingId)}</b>:{' '}
+          {a.strands.length
+            ? `placing ${who} there instead leaves ${a.strands.map(ui.nameOf).join(' and ')} without a slot.`
+            : 'an equal plan, so placing them there costs no one a slot.'}
+        </Box>
+      ))}
+    </Box>
+  );
 }
 
 function NameButton({ patientId }: { patientId: string }) {
@@ -215,7 +238,7 @@ function DecisionCard({ d, narrowed, dense, list }: { d: Decision; narrowed: boo
   const toast = useToast();
   const ui = useBoardUi();
   const act = useBoardActions();
-  const target = { patientId: d.patientId, openingId: d.openingId, choice: d.choice };
+  const target = { patientId: d.patientId, openingId: d.openingId };
   const { selected, dim } = useSelectionState(d.patientId, [d.openingId], narrowed);
   const [open, setOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
@@ -240,9 +263,10 @@ function DecisionCard({ d, narrowed, dense, list }: { d: Decision; narrowed: boo
         </Row>
         <Box sx={[{ fontSize: 12.5 }, dense ? { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } : {}]}>
           → <b>{labelFor(state.trials, d.openingId, !dense)}</b>
-          <Muted size={12.5}> · {d.choice ? `${ordinal(d.choice)} choice` : 'not on their queue'}</Muted>
+          {pv && !pv.patient.queue.some((e) => e.openingId === d.openingId) ? <Muted size={12.5}> · not on their queue</Muted> : null}
           {d.kind === 'proposed' && !dense ? <DesignNote id="A5" /> : null}
         </Box>
+        {d.kind === 'proposed' && !dense ? <WhyThisSlot d={d} /> : null}
         {pr?.placedByHand && !dense ? (
           <Muted size={12}>
             {placeReasonLabel(pr.placedByHand.reason)}
@@ -431,7 +455,7 @@ function BlockedCard({ b, narrowed, dense, list }: { b: Blocked; narrowed: boole
         <Box sx={[{ fontSize: 12.5, lineHeight: 1.5 }, dense ? clampSx(2) : {}]} title={dense ? b.detail : undefined}>
           {b.detail}
         </Box>
-        {b.aheadIds?.length && !dense ? <Muted size={12}>Ahead: {b.aheadIds.map(ui.nameOf).join('; ')}</Muted> : null}
+        {b.aheadIds?.length && !dense ? <Muted size={12}>Proposed there: {b.aheadIds.map(ui.nameOf).join('; ')}</Muted> : null}
         {b.hintOpeningIds.map((oid) => (
           <Row key={oid} sx={{ fontSize: 12.5 }}>
             <Box component="span">
@@ -470,7 +494,7 @@ function BlockedCard({ b, narrowed, dense, list }: { b: Blocked; narrowed: boole
               </Button>
             </>
           ) : null}
-          {b.reason === 'outranked' && first ? (
+          {b.reason === 'seats_taken' && first ? (
             <Button size="small" variant="outlined" onClick={() => seeSlot(first)}>
               See the slot
             </Button>

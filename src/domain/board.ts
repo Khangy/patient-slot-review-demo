@@ -1,33 +1,37 @@
 import type { DemoState, Opening, Pairing, Patient, PlaceReason, Snapshot, Step, Trial, UserId } from './types';
 import { isFit, matchPatient, type Match } from './matching';
 import { daysBetween, fmtShort, TODAY } from './dates';
-import { labelFor, openingFull, openingShort } from './names';
+import { labelFor, openingFull, openingShort, ordinal } from './names';
+import { makeSolver } from './optimizer';
 
 // Everything the Patient Slot Review board and the patient pages derive from the demo state.
 // computeBoard is pure: the store memoizes it, so every change (accept, dismiss, queue, re-check)
 // flows to every column at once.
 //
-// The demo optimizer: patients are placed in rank order (longest on the queue first) into the
-// highest choice on their Interest List that still has an open slot. Accepted and pre-screening
-// pairings hold their slots first; a dismissed pairing is never proposed again. The real
-// optimizer weighs fit and enrollment; how it scores is out of scope for this prototype.
+// The optimizer is the app's (optimizer.ts): the Interest List is a set, not a ranking. Every
+// queued slot the patient fits counts the same, the plan seats as many patients as it can, and
+// only ties go to whoever entered the pool first. Accepted and pre-screening pairings keep their
+// slots and take the patient out of the pool. Next in line for an opening is who would get a
+// slot if one of its offers fell through, from the same re-solve the app uses for backfill.
+//
+// Kept from the demo's design, not the app: a dismissed pairing is never proposed again (the
+// app's reject leaves the patient in the pool, so its next run may propose the same pairing).
 
 export type CandidateStatus =
   | 'accepted'
   | 'pre_screening'
   | 'proposed'
+  | 'next_in_line'
   | 'placed_elsewhere'
-  | 'reserve'
+  | 'queued'
   | 'dismissed'
   | 'not_eligible';
 
 export interface Candidate {
   patientId: string;
-  /** rank among eligible candidates (1 = first in line); undefined when not eligible */
-  rank?: number;
   status: CandidateStatus;
-  /** this opening's place in the patient's own order of choice */
-  choice: number;
+  /** next_in_line: 1 = first to get a slot here if an offer falls through */
+  inLine?: number;
   elsewhereOpeningId?: string;
   match: Match;
   blocked: boolean;
@@ -43,6 +47,9 @@ export interface OpeningView {
   /** accepted / pre-screening pairings holding a slot here */
   fixed: Pairing[];
   proposed: string[];
+  /** who would get a slot here if one of its offers fell through, first in line first */
+  nextInLine: string[];
+  /** proposals, then next in line, then everyone else queued, then not eligible */
   candidates: Candidate[];
   /** patients (seeking or undeclared) who fit but are not queued here */
   fitNotQueued: string[];
@@ -53,7 +60,7 @@ export interface OpeningView {
   unfilled: number;
 }
 
-export type BlockedReason = 'no_slot_in_opening' | 'outranked' | 'no_longer_eligible' | 'dismissed';
+export type BlockedReason = 'no_slot_in_opening' | 'seats_taken' | 'no_longer_eligible' | 'dismissed';
 
 export interface Blocked {
   patientId: string;
@@ -63,8 +70,10 @@ export interface Blocked {
   openingIds: string[];
   /** open now, the patient fits, but it is not on their Interest List */
   hintOpeningIds: string[];
-  /** outranked: who holds the proposals in the opening */
+  /** seats_taken: who holds the proposals in those openings */
   aheadIds?: string[];
+  /** seats_taken: first in line here if an offer falls through (opening id, place in line) */
+  inLine?: { openingId: string; n: number };
   pairing?: Pairing; // dismissed
 }
 
@@ -75,7 +84,6 @@ export interface Decision {
   kind: DecisionKind;
   patientId: string;
   openingId: string;
-  choice: number;
   pairing?: Pairing;
   newSinceSnapshot?: boolean;
 }
@@ -109,8 +117,8 @@ export interface PatientView {
   boardStatus: BoardStatus;
   fixedPairing?: Pairing;
   openStep?: { pairing: Pairing; step: Step };
-  /** the date the patient's ranking starts from (earliest queue date) */
-  queuedSince?: string;
+  /** pool seniority: the earliest queue date among the slots they fit; breaks ties only */
+  inPoolSince?: string;
 }
 
 export interface Board {
@@ -144,16 +152,8 @@ export const placeReasonLabel = (r?: string) => PLACE_REASONS.find((x) => x.valu
 
 const key = (patientId: string, openingId: string) => `${patientId}|${openingId}`;
 
-export function priorityDate(p: Patient): string | undefined {
-  return p.queue.map((e) => e.queuedOn).sort()[0];
-}
-
-function byPriority(a: Patient, b: Patient): number {
-  const da = priorityDate(a) ?? '9999';
-  const db = priorityDate(b) ?? '9999';
-  if (da !== db) return da < db ? -1 : 1;
-  return a.last.localeCompare(b.last);
-}
+/** Next-in-line names per opening, as the app computes backfill (it stores 2 per seat). */
+const BACKFILL_DEPTH = 2;
 
 export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pairings'> & { snapshot?: Snapshot }): Board {
   const { patients, trials, pairings, snapshot } = state;
@@ -170,6 +170,20 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
   }
   const matchOf = (pid: string, oid: string) => matchesBy[pid]?.[oid];
 
+  // Pool seniority, as the app reads it: the earliest of the patient's queued rows that are
+  // still a fit (eligible or pending review). It only ever breaks ties.
+  const inPoolSince = (p: Patient): string | undefined =>
+    p.queue
+      .filter((e) => isFit(matchOf(p.id, e.openingId)))
+      .map((e) => e.queuedOn)
+      .sort()[0] ?? p.queue.map((e) => e.queuedOn).sort()[0];
+  const bySeniority = (a: Patient, b: Patient): number => {
+    const da = inPoolSince(a) ?? '9999';
+    const db = inPoolSince(b) ?? '9999';
+    if (da !== db) return da < db ? -1 : 1;
+    return a.last.localeCompare(b.last) || a.id.localeCompare(b.id);
+  };
+
   // pairings
   const fixed = pairings.filter((pr) => pr.status === 'accepted' || pr.status === 'pre_screening');
   const fixedByPatient = Object.fromEntries(fixed.map((pr) => [pr.patientId, pr]));
@@ -182,28 +196,60 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
     const held = opening.externalHolds.length + fixed.filter((pr) => pr.openingId === opening.id).length;
     openNow[opening.id] = opening.state === 'open' ? Math.max(0, opening.slotsTotal - held) : 0;
   }
-  const remaining = { ...openNow };
 
-  // allocation
-  const placeable = patients
-    .filter((p) => p.status === 'seeking' && p.queue.length > 0 && !fixedByPatient[p.id])
-    .sort(byPriority);
-  const assignment: Record<string, { openingId: string; choice: number }> = {};
-  for (const p of placeable) {
-    for (let i = 0; i < p.queue.length; i++) {
-      const oid = p.queue[i].openingId;
-      const o = openingOf(oid);
-      if (!o || o.opening.state !== 'open') continue;
-      if (!isFit(matchOf(p.id, oid))) continue;
-      if (dismissedKeys.has(key(p.id, oid))) continue;
-      if (remaining[oid] > 0) {
-        assignment[p.id] = { openingId: oid, choice: i + 1 };
-        remaining[oid] -= 1;
-        break;
-      }
-    }
+  // ── allocation: the app's optimizer ──
+  // The pool: seeking patients without a held slot, with every open slot they are queued for
+  // and fit (in any order: the Interest List is a set).
+  const wantsOf = (p: Patient) =>
+    p.queue
+      .map((e) => e.openingId)
+      .filter((oid) => openNow[oid] > 0 && isFit(matchOf(p.id, oid)) && !dismissedKeys.has(key(p.id, oid)));
+  const placeable = patients.filter((p) => p.status === 'seeking' && p.queue.length > 0 && !fixedByPatient[p.id]).sort(bySeniority);
+  const pool = placeable.map((p) => ({ p, wants: wantsOf(p) })).filter((x) => x.wants.length > 0);
+  // One column per open slot, in trial order. An opening never needs more columns than patients
+  // who want it (the playground's cap): the plan is the same, the solve is smaller.
+  const seats: { openingId: string; trialId: string }[] = [];
+  for (const { trial, opening } of openingPairs) {
+    const want = pool.filter((x) => x.wants.includes(opening.id)).length;
+    for (let k = 0; k < Math.min(openNow[opening.id], want); k++) seats.push({ openingId: opening.id, trialId: trial.id });
   }
-  const proposals = Object.entries(assignment).map(([patientId, a]) => ({ patientId, openingId: a.openingId }));
+  const solve = makeSolver({
+    fits: pool.map((x) => seats.map((s) => x.wants.includes(s.openingId))),
+    seniority: pool.map((x) => Date.parse(inPoolSince(x.p) ?? '9999-12-31')),
+    slotGroups: seats.map((s) => s.trialId),
+  });
+  const plan = solve();
+  const assignment: Record<string, string> = {};
+  plan.forEach((j, i) => {
+    if (j >= 0) assignment[pool[i].p.id] = seats[j].openingId;
+  });
+  const proposals = pool.filter((x) => assignment[x.p.id]).map((x) => ({ patientId: x.p.id, openingId: assignment[x.p.id] }));
+
+  // Next in line, from the app's backfill re-solve: take one proposed patient out of the trial
+  // and re-solve; whoever gets a slot then and has none now is next in line, then the one after.
+  // (The app keeps the patient who lands in that exact seat; with several identical slots in
+  // one opening that can be someone already proposed there, so the board reads it per opening.)
+  const lineRank: Record<string, Record<string, number>> = {};
+  const unplaced = (i: number) => plan[i] < 0;
+  plan.forEach((j, occupant) => {
+    if (j < 0) return;
+    const oid = seats[j].openingId;
+    const banned = new Set<number>([occupant]);
+    for (let k = 1; k <= BACKFILL_DEPTH; k++) {
+      const cf = solve({ banned, group: seats[j].trialId });
+      const next = cf.findIndex((sj, i) => sj >= 0 && seats[sj].openingId === oid && !banned.has(i) && unplaced(i));
+      if (next < 0) break;
+      const pid = pool[next].p.id;
+      const ranks = (lineRank[oid] ??= {});
+      ranks[pid] = Math.min(ranks[pid] ?? k, k);
+      banned.add(next);
+    }
+  });
+  const order = new Map(pool.map((x, i) => [x.p.id, i]));
+  const nextInLineOf = (oid: string) =>
+    Object.entries(lineRank[oid] ?? {})
+      .sort(([a, ra], [b, rb]) => ra - rb || (order.get(a) ?? 0) - (order.get(b) ?? 0))
+      .map(([pid]) => pid);
 
   // possible slots now
   const possibleNowOf = (p: Patient) =>
@@ -223,12 +269,12 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
       out.push({ patientId, why });
     };
     const eligible = patients.filter((p) => seekingLike(p) && !fixedByPatient[p.id] && isFit(matchOf(p.id, oid)));
-    eligible.filter((p) => p.queue.some((e) => e.openingId === oid) && !assignment[p.id]).sort(byPriority).forEach((p) => add(p.id, 'queued'));
+    eligible.filter((p) => p.queue.some((e) => e.openingId === oid) && !assignment[p.id]).sort(bySeniority).forEach((p) => add(p.id, 'queued'));
     const o = openingOf(oid);
     patients
       .filter((p) => p.watches.some((w) => w.reason === 'slot' && (w.openingId === oid || (!w.openingId && w.trialId === o?.trial.id))))
       .forEach((p) => add(p.id, 'watching'));
-    eligible.filter((p) => !assignment[p.id]).sort(byPriority).forEach((p) => add(p.id, 'fits'));
+    eligible.filter((p) => !assignment[p.id]).sort(bySeniority).forEach((p) => add(p.id, 'fits'));
     return out;
   };
   for (const { opening } of openingPairs) {
@@ -346,17 +392,29 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
             hintOpeningIds,
           };
         } else {
-          const oid = withSlots[0];
-          const ahead = proposals.filter((x) => x.openingId === oid).map((x) => x.patientId);
-          const n = openNow[oid];
+          // Every slot they want is proposed to someone else. With the plan already seating as
+          // many patients as it can, those are patients who entered the pool earlier (or the
+          // same day): seating this one instead would only swap who waits.
+          const n = withSlots.reduce((sum, oid) => sum + openNow[oid], 0);
+          const ahead = proposals.filter((x) => withSlots.includes(x.openingId)).map((x) => x.patientId);
+          const line = withSlots
+            .map((oid) => ({ openingId: oid, n: nextInLineOf(oid).indexOf(p.id) + 1 }))
+            .filter((x) => x.n > 0)
+            .sort((a, c) => a.n - c.n)[0];
+          const names = withSlots.map((oid) => labelFor(trials, oid)).join(' and ');
           b = {
             patientId: p.id,
-            reason: 'outranked',
-            label: 'Lost to a higher rank',
-            detail: `${labelFor(trials, oid)}: ${n} open slot${n === 1 ? '' : 's'}, all proposed to patients ranked ahead. Next in line if one falls through.`,
+            reason: 'seats_taken',
+            label: line ? 'Next in line' : 'Slots proposed to others',
+            detail:
+              `${names}: ${n} open slot${n === 1 ? '' : 's'}, all proposed to others. The plan already seats as many patients as it can, and ties go to whoever entered the pool first. ` +
+              (line
+                ? `${line.n === 1 ? 'First' : ordinal(line.n)} in line ${withSlots.length === 1 ? 'there' : `for ${labelFor(trials, line.openingId)}`} if an offer falls through.`
+                : 'Not next in line yet.'),
             openingIds: withSlots,
             hintOpeningIds,
             aheadIds: ahead,
+            inLine: line,
           };
         }
       }
@@ -366,10 +424,12 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
   }
 
   // openings
+  const STATUS_ORDER: CandidateStatus[] = ['accepted', 'pre_screening', 'proposed', 'next_in_line', 'placed_elsewhere', 'queued', 'dismissed', 'not_eligible'];
   const openings: OpeningView[] = openingPairs.map(({ trial, opening }) => {
     const queued = patients
       .filter((p) => p.status !== 'not_seeking' && p.queue.some((e) => e.openingId === opening.id))
-      .sort(byPriority);
+      .sort(bySeniority);
+    const line = nextInLineOf(opening.id);
     const rows: Candidate[] = queued.map((p) => {
       const m = matchOf(p.id, opening.id)!;
       const fx = fixedByPatient[p.id];
@@ -377,25 +437,28 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
       let status: CandidateStatus;
       let elsewhereOpeningId: string | undefined;
       if (fx?.openingId === opening.id) status = fx.status as 'accepted' | 'pre_screening';
-      else if (asg?.openingId === opening.id) status = 'proposed';
+      else if (asg === opening.id) status = 'proposed';
       else if (dismissedKeys.has(key(p.id, opening.id))) status = 'dismissed';
       else if (!isFit(m)) status = 'not_eligible';
       else if (fx || asg) {
         status = 'placed_elsewhere';
-        elsewhereOpeningId = fx?.openingId ?? asg?.openingId;
-      } else status = 'reserve';
+        elsewhereOpeningId = fx?.openingId ?? asg;
+      } else if (line.includes(p.id)) status = 'next_in_line';
+      else status = 'queued';
       return {
         patientId: p.id,
         status,
-        choice: p.queue.findIndex((e) => e.openingId === opening.id) + 1,
+        inLine: status === 'next_in_line' ? line.indexOf(p.id) + 1 : undefined,
         elsewhereOpeningId,
         match: m,
         blocked: !!blockedBy[p.id],
       };
     });
-    const eligibleRows = rows.filter((r) => r.status !== 'not_eligible');
-    eligibleRows.forEach((r, i) => (r.rank = i + 1));
-    const candidates = [...eligibleRows, ...rows.filter((r) => r.status === 'not_eligible')];
+    // stable sort: within a status, pool seniority (next in line: their place in line)
+    const candidates = rows
+      .map((r, i) => ({ r, i }))
+      .sort((a, b) => STATUS_ORDER.indexOf(a.r.status) - STATUS_ORDER.indexOf(b.r.status) || (a.r.inLine ?? 0) - (b.r.inLine ?? 0) || a.i - b.i)
+      .map((x) => x.r);
     const queuedIds = new Set(queued.map((p) => p.id));
     const proposed = proposals.filter((x) => x.openingId === opening.id).map((x) => x.patientId);
     return {
@@ -406,6 +469,7 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
       openNow: openNow[opening.id],
       fixed: fixed.filter((pr) => pr.openingId === opening.id),
       proposed,
+      nextInLine: line.filter((pid) => rows.some((r) => r.patientId === pid && r.status === 'next_in_line')),
       candidates,
       fitNotQueued: patients
         .filter((p) => seekingLike(p) && !queuedIds.has(p.id) && !fixedByPatient[p.id] && isFit(matchOf(p.id, opening.id)))
@@ -413,7 +477,7 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
       watching: patients
         .filter((p) => p.watches.some((w) => w.reason === 'slot' && (w.openingId === opening.id || (!w.openingId && w.trialId === trial.id))))
         .map((p) => p.id),
-      blocks: candidates.filter((c) => c.status === 'reserve' && c.blocked).map((c) => c.patientId),
+      blocks: candidates.filter((c) => (c.status === 'next_in_line' || c.status === 'queued') && c.blocked).map((c) => c.patientId),
       unfilled: Math.max(0, openNow[opening.id] - proposed.length),
     };
   });
@@ -427,7 +491,6 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
       kind: 'proposed' as const,
       patientId: x.patientId,
       openingId: x.openingId,
-      choice: assignment[x.patientId].choice,
       newSinceSnapshot: snapshot ? !inSnapshot(x.patientId, x.openingId) : false,
     })),
     ...fixed.map((pr) => ({
@@ -435,7 +498,6 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
       kind: pr.status as 'accepted' | 'pre_screening',
       patientId: pr.patientId,
       openingId: pr.openingId,
-      choice: pr.choice,
       pairing: pr,
     })),
     ...dismissedPairings.map((pr) => ({
@@ -443,7 +505,6 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
       kind: 'dismissed' as const,
       patientId: pr.patientId,
       openingId: pr.openingId,
-      choice: pr.choice,
       pairing: pr,
     })),
   ];
@@ -478,7 +539,7 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
       boardStatus,
       fixedPairing: fx,
       openStep: fx && openStep ? { pairing: fx, step: openStep } : undefined,
-      queuedSince: priorityDate(p),
+      inPoolSince: inPoolSince(p),
     };
   });
 
@@ -519,8 +580,8 @@ export function computeBoard(state: Pick<DemoState, 'patients' | 'trials' | 'pai
 
 export type PlaceCheck =
   | { ok: false; reason: string }
-  /** accept: the optimizer already proposed this pairing; place: by hand, ahead of its order */
-  | { ok: true; kind: 'accept' | 'place'; choice: number };
+  /** accept: the optimizer already proposed this pairing; place: by hand, a deviation from the plan */
+  | { ok: true; kind: 'accept' | 'place' };
 
 /** Can this patient go into this opening's slot right now, and is it an Accept or a placement by hand? */
 export function placeCheck(board: Board, patientId: string, openingId: string): PlaceCheck {
@@ -541,9 +602,8 @@ export function placeCheck(board: Board, patientId: string, openingId: string): 
     return { ok: false, reason: chk ? `Not a fit: ${chk.patientHas}, needs ${chk.trialWants}` : 'Not a fit' };
   }
   if (ov.openNow === 0) return { ok: false, reason: 'No open slot here' };
-  const choice = pv.patient.queue.findIndex((e) => e.openingId === openingId) + 1;
-  if (pv.decision?.kind === 'proposed' && pv.decision.openingId === openingId) return { ok: true, kind: 'accept', choice };
-  return { ok: true, kind: 'place', choice };
+  if (pv.decision?.kind === 'proposed' && pv.decision.openingId === openingId) return { ok: true, kind: 'accept' };
+  return { ok: true, kind: 'place' };
 }
 
 export interface PlaceChange {
@@ -570,13 +630,12 @@ export function simulatePlace(
   me: UserId,
   at: string,
 ): { released?: string; changes: PlaceChange[] } {
-  const choice = state.patients.find((p) => p.id === patientId)?.queue.findIndex((e) => e.openingId === openingId) ?? -1;
   const sim = computeBoard({
     patients: state.patients,
     trials: state.trials,
     pairings: [
       ...state.pairings.filter((x) => !(x.patientId === patientId && x.openingId === openingId)),
-      { id: 'sim', patientId, openingId, status: 'accepted', choice: choice + 1, decidedAt: at, decidedBy: me, steps: [], trail: [], placedByHand: { reason: 'other' } },
+      { id: 'sim', patientId, openingId, status: 'accepted', decidedAt: at, decidedBy: me, steps: [], trail: [], placedByHand: { reason: 'other' } },
     ],
   });
   const before = Object.fromEntries(board.proposals.map((x) => [x.patientId, x.openingId]));
@@ -589,4 +648,38 @@ export function simulatePlace(
   }
   const mine = before[patientId];
   return { released: mine && mine !== openingId ? mine : undefined, changes };
+}
+
+export interface Alternative {
+  openingId: string;
+  /** patients who would lose their proposal and get no other (the price of the swap) */
+  strands: string[];
+}
+
+/**
+ * "Why this slot" for a proposal: the patient's other queued open slots, each with who would
+ * be left without a slot if the team placed them there instead. The same question as the
+ * playground's substitution impact matrix; an empty list means a free swap.
+ */
+export function alternativesFor(
+  state: Pick<DemoState, 'patients' | 'trials' | 'pairings'>,
+  board: Board,
+  patientId: string,
+  me: UserId,
+  at: string,
+): Alternative[] {
+  const pv = board.patientById[patientId];
+  if (!pv || pv.decision?.kind !== 'proposed') return [];
+  const here = pv.decision.openingId;
+  return pv.patient.queue
+    .map((e) => e.openingId)
+    .filter((oid) => oid !== here)
+    .filter((oid) => {
+      const c = placeCheck(board, patientId, oid);
+      return c.ok && !state.pairings.some((x) => x.patientId === patientId && x.openingId === oid && x.status === 'dismissed');
+    })
+    .map((oid) => {
+      const sim = simulatePlace(state, board, patientId, oid, me, at);
+      return { openingId: oid, strands: sim.changes.filter((c) => c.from && !c.to).map((c) => c.patientId) };
+    });
 }

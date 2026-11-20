@@ -19,9 +19,9 @@ import { useMemo, useState, type ReactNode } from 'react';
 import type { DismissReason, Pairing, PlaceReason, Step, UserId } from '@/domain/types';
 import { TEAM, SITE_NAME } from '@/domain/seed';
 import { addDays, fmtShort, fmtTime, fmtWeekday, fmtWhen, nextBusinessDay, TODAY } from '@/domain/dates';
-import { labelFor, member, ordinal } from '@/domain/names';
+import { labelFor, member } from '@/domain/names';
 import { dxStage, keyMarker } from '@/domain/summary';
-import { dismissReasonLabel, PLACE_REASONS, simulatePlace } from '@/domain/board';
+import { alternativesFor, dismissReasonLabel, PLACE_REASONS, simulatePlace } from '@/domain/board';
 import { useStore, type AcceptPlan } from '@/state/store';
 import { useToast } from '@/components/Toast';
 import { PersonTag, ToneChip, Mono } from '@/components/ui';
@@ -67,7 +67,7 @@ export function AcceptDialog({
   confirmLabel = 'Accept and assign',
   canConfirm = true,
 }: {
-  target: { patientId: string; openingId: string; choice: number } | null;
+  target: { patientId: string; openingId: string } | null;
   onClose: () => void;
   onConfirm: (plan: AcceptPlan) => void;
   /** Place by hand reuses this dialog with its own title, intro and button */
@@ -77,8 +77,10 @@ export function AcceptDialog({
   confirmLabel?: string;
   canConfirm?: boolean;
 }) {
-  const { state, me } = useStore();
+  const { state, board, me, now } = useStore();
   const ui = useBoardUi();
+  // A5: the patient's other queued slots and what choosing one would cost, priced once on open.
+  const [alts] = useState(() => (target && !intro ? alternativesFor(state, board, target.patientId, me.id, now()) : []));
   const [consentBy, setConsentBy] = useState<UserId>('u-maya');
   const [consentDue, setConsentDue] = useState(nextBusinessDay(TODAY));
   const [labsBy, setLabsBy] = useState<UserId>('u-luis');
@@ -90,9 +92,20 @@ export function AcceptDialog({
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 0.5 }}>
           {intro ?? (
-            <Muted size={13.5}>
-              {ordinal(target.choice)} choice on the patient's Interest List. Accepting holds the slot and gives each next step a person and a date.
-            </Muted>
+            <Stack spacing={0.75}>
+              <Muted size={13.5}>
+                The optimizer's proposal: of every plan, the one that seats the most patients. Accepting holds the slot and gives each next step a person and a
+                date.
+              </Muted>
+              {alts.map((a) => (
+                <Muted key={a.openingId} size={13}>
+                  Also queued for <b>{labelFor(state.trials, a.openingId)}</b>:{' '}
+                  {a.strands.length
+                    ? `placing ${ui.nameOf(target.patientId)} there instead leaves ${a.strands.map(ui.nameOf).join(' and ')} without a slot.`
+                    : 'an equal plan, so placing them there costs no one a slot.'}
+                </Muted>
+              ))}
+            </Stack>
           )}
           <Stack spacing={1.5}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
@@ -180,11 +193,11 @@ export function placeChangeLines(
     if (c.from && c.to) lines.push(`${who} moves from ${label(c.from)} to ${label(c.to)}.`);
     else if (c.from)
       lines.push(
-        c.blockedReason === 'outranked'
-          ? `${who} loses the proposal for ${label(c.from)} and has no other open slot: next in line there if one frees up.`
+        c.blockedReason === 'seats_taken'
+          ? `${who} loses the proposal for ${label(c.from)} and has no other open slot on their queue${c.blockedLabel === 'Next in line' ? ': next in line if one frees up' : ''}.`
           : `${who} loses the proposal for ${label(c.from)} and is blocked${c.blockedLabel ? ` (${c.blockedLabel.toLowerCase()})` : ''}.`,
       );
-    else if (c.to) lines.push(`${who} moves up for ${label(c.to)}.`);
+    else if (c.to) lines.push(`${who} is proposed for ${label(c.to)}.`);
   }
   return lines;
 }
@@ -208,7 +221,7 @@ export function PlaceDialog({
   const [sim] = useState(() => simulatePlace(state, board, patientId, openingId, me.id, now()));
   const p = board.patientById[patientId]?.patient;
   if (!p) return null;
-  const choice = p.queue.findIndex((e) => e.openingId === openingId) + 1;
+  const queued = p.queue.some((e) => e.openingId === openingId);
   const dismissed = state.pairings.find((pr) => pr.patientId === patientId && pr.openingId === openingId && pr.status === 'dismissed');
   const lines = placeChangeLines(sim, patientId, ui.nameOf, label);
   const needsNote = reason === 'other' && !note.trim();
@@ -216,8 +229,8 @@ export function PlaceDialog({
   const intro = (
     <Stack spacing={1.5}>
       <Muted size={13.5}>
-        {choice ? `${ordinal(choice)} choice on their queue.` : 'Not on their queue for Optimized Match.'} Placing by hand puts them ahead of the
-        optimizer's order and holds the slot, like Accept.
+        {queued ? 'On their queue.' : 'Not on their queue for Optimized Match.'} Placing by hand deviates from the optimizer's plan and holds the slot, like
+        Accept.
       </Muted>
       {p.status !== 'seeking' ? <Muted size={13}>Their status changes from {PATIENT_STATUS[p.status].label} to Seeking.</Muted> : null}
       {dismissed ? (
@@ -261,7 +274,7 @@ export function PlaceDialog({
 
   return (
     <AcceptDialog
-      target={{ patientId, openingId, choice }}
+      target={{ patientId, openingId }}
       title={`Place ${ui.nameOf(patientId)} → ${labelFor(state.trials, openingId, true)}`}
       intro={intro}
       firstStep="Placed at the meeting"
@@ -479,7 +492,7 @@ export function ExportSummaryDialog({ open, onClose }: { open: boolean; onClose:
       } else {
         const steps = p.steps.filter((s) => !s.doneAt && !s.auto);
         const who = steps.map((s) => `${s.label}: ${s.assignee ? member(s.assignee).short : 'unassigned'}, ${s.due ? `due ${fmtWeekday(s.due)}` : s.dueText ?? ''}`).join('; ');
-        L.push(`- Accepted: ${name(p.patientId)} → ${label(p.openingId)} (${ordinal(p.choice)} choice). ${who}`);
+        L.push(`- ${p.placedByHand ? 'Placed by hand' : 'Accepted'}: ${name(p.patientId)} → ${label(p.openingId)}. ${who}`);
       }
     }
     L.push('');
@@ -487,7 +500,7 @@ export function ExportSummaryDialog({ open, onClose }: { open: boolean; onClose:
     const proposed = board.decisions.filter((d) => d.kind === 'proposed');
     L.push(`STILL TO DECIDE (${proposed.length} proposals)`);
     if (!proposed.length) L.push('- None');
-    for (const d of proposed) L.push(`- ${name(d.patientId)} → ${label(d.openingId)} (${ordinal(d.choice)} choice)`);
+    for (const d of proposed) L.push(`- ${name(d.patientId)} → ${label(d.openingId)}`);
     L.push('');
 
     const inFlight = state.pairings.filter((p) => p.status !== 'dismissed' && p.decidedAt < snapAt);

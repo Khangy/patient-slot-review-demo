@@ -21,7 +21,8 @@ type CellKind =
   | 'accepted'
   | 'pre_screening'
   | 'proposed'
-  | 'reserve'
+  | 'next_in_line'
+  | 'queued'
   | 'placed_elsewhere'
   | 'queued_no_slot'
   | 'not_eligible'
@@ -32,15 +33,16 @@ type CellKind =
 
 interface Cell {
   kind: CellKind;
-  choice?: number;
-  rank?: number;
+  /** next_in_line: place in line if an offer here falls through */
+  inLine?: number;
 }
 
 const CELL: Record<CellKind, { label: string; tone: ToneName; mark: 'solid' | 'outline' | 'dashed' | 'dot' | 'ring' | 'none' }> = {
   accepted: { label: 'Accepted', tone: 'green', mark: 'solid' },
   pre_screening: { label: 'Pre-screening', tone: 'purple', mark: 'solid' },
   proposed: { label: 'Proposed', tone: 'blue', mark: 'solid' },
-  reserve: { label: 'Queued, in reserve', tone: 'amber', mark: 'outline' },
+  next_in_line: { label: 'Queued, next in line', tone: 'amber', mark: 'outline' },
+  queued: { label: 'Queued, every slot proposed', tone: 'amber', mark: 'outline' },
   placed_elsewhere: { label: 'Queued, placed elsewhere', tone: 'grey', mark: 'outline' },
   queued_no_slot: { label: 'Queued, no open slot', tone: 'amber', mark: 'dashed' },
   not_eligible: { label: 'Queued, not eligible', tone: 'red', mark: 'outline' },
@@ -53,15 +55,17 @@ const CELL: Record<CellKind, { label: string; tone: ToneName; mark: 'solid' | 'o
 function cellOf(pv: PatientView, ov: OpeningView): Cell {
   const oid = ov.opening.id;
   const fx = pv.fixedPairing;
-  if (fx?.openingId === oid) return { kind: fx.status === 'accepted' ? 'accepted' : 'pre_screening', choice: fx.choice };
+  if (fx?.openingId === oid) return { kind: fx.status === 'accepted' ? 'accepted' : 'pre_screening' };
   const d = pv.decision;
-  if (d?.kind === 'proposed' && d.openingId === oid) return { kind: 'proposed', choice: d.choice };
+  if (d?.kind === 'proposed' && d.openingId === oid) return { kind: 'proposed' };
   const cand = ov.candidates.find((c) => c.patientId === pv.patient.id);
   if (cand) {
-    if (cand.status === 'dismissed') return { kind: 'dismissed', choice: cand.choice };
-    if (cand.status === 'not_eligible') return { kind: 'not_eligible', choice: cand.choice };
-    if (cand.status === 'placed_elsewhere') return { kind: 'placed_elsewhere', choice: cand.choice, rank: cand.rank };
-    return { kind: ov.openNow ? 'reserve' : 'queued_no_slot', choice: cand.choice, rank: cand.rank };
+    if (cand.status === 'dismissed') return { kind: 'dismissed' };
+    if (cand.status === 'not_eligible') return { kind: 'not_eligible' };
+    if (cand.status === 'placed_elsewhere') return { kind: 'placed_elsewhere' };
+    if (!ov.openNow) return { kind: 'queued_no_slot' };
+    if (cand.status === 'next_in_line') return { kind: 'next_in_line', inLine: cand.inLine };
+    return { kind: 'queued' };
   }
   if (isFit(pv.matchById[oid])) return { kind: ov.openNow ? 'fits' : 'fits_no_slot' };
   return { kind: 'none' };
@@ -71,7 +75,7 @@ function Mark({ cell }: { cell: Cell }) {
   const tones = useTones();
   const meta = CELL[cell.kind];
   const t = tones[meta.tone];
-  const text = cell.kind === 'accepted' || cell.kind === 'pre_screening' ? '✓' : cell.kind === 'dismissed' ? '×' : cell.kind === 'not_eligible' ? '!' : cell.choice ? String(cell.choice) : '';
+  const text = cell.kind === 'accepted' || cell.kind === 'pre_screening' ? '✓' : cell.kind === 'dismissed' ? '×' : cell.kind === 'not_eligible' ? '!' : cell.inLine ? String(cell.inLine) : '';
   if (meta.mark === 'none') return null;
   if (meta.mark === 'dot') return <Box sx={{ width: 9, height: 9, borderRadius: '50%', bgcolor: t.solid }} />;
   if (meta.mark === 'ring') return <Box sx={{ width: 9, height: 9, borderRadius: '50%', border: `1.5px solid ${t.solid}` }} />;
@@ -97,25 +101,26 @@ function Mark({ cell }: { cell: Cell }) {
 }
 
 function describe(board: Board, pv: PatientView, ov: OpeningView, cell: Cell): string {
-  const choice = cell.choice ? `${ordinal(cell.choice)} choice` : '';
   switch (cell.kind) {
     case 'proposed':
-      return `Proposed by the optimizer, ${choice}.`;
+      return 'Proposed by the optimizer: of every plan, the one that seats the most patients.';
     case 'accepted':
       return pv.fixedPairing?.placedByHand ? 'Placed by hand at the meeting.' : 'Accepted at the meeting.';
     case 'pre_screening':
       return 'In pre-screening for this slot.';
-    case 'reserve':
-      return `Queued (${choice}), #${cell.rank} in line: every open slot here is proposed to someone ranked ahead.`;
+    case 'next_in_line':
+      return `Queued. Every open slot here is proposed; ${cell.inLine === 1 ? 'first' : ordinal(cell.inLine ?? 1)} in line if an offer here falls through.`;
+    case 'queued':
+      return 'Queued. Every open slot here is proposed to others, and the plan already seats as many patients as it can; ties go to whoever entered the pool first.';
     case 'placed_elsewhere':
-      return `Queued (${choice}), but proposed or placed for ${board.openingById[pv.decision?.openingId ?? pv.fixedPairing?.openingId ?? '']?.short ?? 'another slot'}.`;
+      return `Queued, but proposed or placed for ${board.openingById[pv.decision?.openingId ?? pv.fixedPairing?.openingId ?? '']?.short ?? 'another slot'}.`;
     case 'queued_no_slot':
-      return `Queued (${choice}); no slot is open here right now.`;
+      return 'Queued; no slot is open here right now.';
     case 'not_eligible':
     case 'none': {
       const c = placeCheck(board, pv.patient.id, ov.opening.id);
       const why = c.ok ? '' : c.reason;
-      return cell.kind === 'not_eligible' ? `Queued (${choice}), not eligible on the last match. ${why}.` : `${why}.`;
+      return cell.kind === 'not_eligible' ? `Queued, not eligible on the last match. ${why}.` : `${why}.`;
     }
     case 'dismissed':
       return 'Dismissed by the team at this meeting.';
@@ -130,24 +135,30 @@ export function MatrixView() {
   const { board } = useStore();
   const ui = useBoardUi();
   const teal = useTone('teal');
-  const [showAll, setShowAll] = useShowAll(ui.selection);
+  const { patientId: selPid, openingId: selOid } = ui.selection;
+  const [showAllCols, setShowAllCols] = useShowAll(selPid);
+  const [showAllRows, setShowAllRows] = useShowAll(selOid);
   const [open, setOpen] = useState<{ pid: string; oid: string; anchor: HTMLElement } | null>(null);
-  const sel = ui.selection;
 
   const allCols = board.openings.filter((o) => o.opening.state === 'open');
   const inReview = board.patients.filter((v) => v.inReview).sort((a, b) => a.patient.last.localeCompare(b.patient.last));
 
-  // The same narrowing as the columns (SR6): a patient narrows the slots, a slot narrows the patients.
-  const forPatient = sel?.kind === 'patient' ? openingsForPatient(board, sel.id) : null;
-  const forOpening = sel?.kind === 'opening' ? patientsForOpening(board, sel.id) : null;
-  const cols = forPatient && !showAll ? forPatient.all.map((id) => board.openingById[id]).filter(Boolean) : allCols;
+  // The same narrowing as the columns (SR6, SR8): a patient narrows the slots, a slot narrows
+  // the patients, and with both selected both apply.
+  const forPatient = selPid ? openingsForPatient(board, selPid) : null;
+  const forOpening = selOid ? patientsForOpening(board, selOid) : null;
+  // narrowed columns keep the board's trial order, so each trial stays one header group
+  const cols = forPatient && !showAllCols ? allCols.filter((ov) => forPatient.all.includes(ov.opening.id)) : allCols;
+  const rowsOf = (ids: string[]) => ids.map((id) => board.patientById[id]).filter((v): v is PatientView => !!v);
   const sections: { key: string; title: string; rows: PatientView[] }[] =
-    forOpening && !showAll
+    forOpening && !showAllRows
       ? [
-          { key: 'holding', title: 'Holding a slot here', rows: forOpening.holding.map((id) => board.patientById[id]) },
-          { key: 'ranked', title: 'Candidates in rank order', rows: forOpening.ranked.map((id) => board.patientById[id]) },
-          { key: 'fits', title: 'Fits, not queued', rows: forOpening.fits.map((id) => board.patientById[id]) },
-          { key: 'ne', title: 'Queued, not eligible', rows: forOpening.notEligible.map((id) => board.patientById[id]) },
+          { key: 'holding', title: 'Holding a slot here', rows: rowsOf(forOpening.holding) },
+          { key: 'proposed', title: 'Proposed here', rows: rowsOf(forOpening.proposed) },
+          { key: 'line', title: 'Next in line', rows: rowsOf(forOpening.nextInLine) },
+          { key: 'queued', title: 'Also queued here', rows: rowsOf(forOpening.queued) },
+          { key: 'fits', title: 'Fits, not queued', rows: rowsOf(forOpening.fits) },
+          { key: 'ne', title: 'Queued, not eligible', rows: rowsOf(forOpening.notEligible) },
         ]
       : (() => {
           const by: Record<SectionKey, PatientView[]> = { decide: [], blocked: [], none: [], progress: [], other: [] };
@@ -175,11 +186,11 @@ export function MatrixView() {
         <DesignNote id="SR7" />
         <Legend />
       </Row>
-      {forPatient ? <ReduceBar shown={forPatient.all.length} total={allCols.length} noun="openings" who={ui.nameOf(sel!.id)} all={showAll} onToggle={setShowAll} /> : null}
+      {forPatient ? <ReduceBar shown={forPatient.all.length} total={allCols.length} noun="openings" who={ui.nameOf(selPid!)} all={showAllCols} onToggle={setShowAllCols} /> : null}
       {forOpening ? (
-        <ReduceBar shown={forOpening.all.length} total={inReview.length} noun="patients" who={board.openingById[sel!.id]?.short ?? ''} all={showAll} onToggle={setShowAll} />
+        <ReduceBar shown={forOpening.all.length} total={inReview.length} noun="patients" who={board.openingById[selOid!]?.short ?? ''} all={showAllRows} onToggle={setShowAllRows} />
       ) : null}
-      {cols.length === 0 ? <Muted>No open slot fits {sel ? ui.nameOf(sel.id) : 'anyone'} right now.</Muted> : null}
+      {cols.length === 0 ? <Muted>No open slot fits {selPid ? ui.nameOf(selPid) : 'anyone'} right now.</Muted> : null}
       <Box
         data-scroll-col=""
         sx={{ overflow: 'auto', maxHeight: { md: 'calc(100vh - 92px)' }, border: 1, borderColor: 'divider', borderRadius: 2, bgcolor: 'background.paper' }}
@@ -209,7 +220,7 @@ export function MatrixView() {
             </tr>
             <tr>
               {cols.map((ov, i) => {
-                const on = sel?.kind === 'opening' && sel.id === ov.opening.id;
+                const on = selOid === ov.opening.id;
                 const first = i === 0 || cols[i - 1].trial.id !== ov.trial.id;
                 const own = ov.opening.path[ov.opening.path.length - 1] ?? 'Whole trial';
                 return (
@@ -260,7 +271,7 @@ function SectionRows({
 }) {
   const ui = useBoardUi();
   const teal = useTone('teal');
-  const sel = ui.selection;
+  const { patientId: selPid, openingId: selOid } = ui.selection;
   return (
     <>
       <tr>
@@ -275,7 +286,7 @@ function SectionRows({
       </tr>
       {rows.map((pv) => {
         const p = pv.patient;
-        const rowOn = sel?.kind === 'patient' && sel.id === p.id;
+        const rowOn = selPid === p.id;
         const status = BOARD_STATUS[pv.boardStatus];
         return (
           <Box component="tr" key={p.id} sx={{ '&:hover td, &:hover th': { bgcolor: 'action.hover' } }}>
@@ -295,9 +306,9 @@ function SectionRows({
             </Box>
             {cols.map((ov, i) => {
               const cell = cellOf(pv, ov);
-              const colOn = sel?.kind === 'opening' && sel.id === ov.opening.id;
+              const colOn = selOid === ov.opening.id;
               const first = i === 0 || cols[i - 1].trial.id !== ov.trial.id;
-              const label = `${ui.nameOf(p.id)} · ${ov.short}: ${CELL[cell.kind].label}${cell.choice ? `, ${ordinal(cell.choice)} choice` : ''}`;
+              const label = `${ui.nameOf(p.id)} · ${ov.short}: ${CELL[cell.kind].label}${cell.inLine ? ` (${cell.inLine})` : ''}`;
               return (
                 <Box component="td" key={ov.opening.id} sx={{ p: 0, borderBottom: 1, borderLeft: first ? 1 : 0, borderColor: 'divider', bgcolor: colOn || rowOn ? teal.bg : undefined }}>
                   <ButtonBase
@@ -319,19 +330,19 @@ function SectionRows({
 }
 
 function Legend() {
-  const items: CellKind[] = ['proposed', 'accepted', 'pre_screening', 'reserve', 'queued_no_slot', 'placed_elsewhere', 'not_eligible', 'dismissed', 'fits', 'fits_no_slot'];
+  const items: CellKind[] = ['proposed', 'accepted', 'pre_screening', 'next_in_line', 'queued', 'queued_no_slot', 'placed_elsewhere', 'not_eligible', 'dismissed', 'fits', 'fits_no_slot'];
   return (
     <Box component="ul" aria-label="Legend" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, m: 0, p: 0, listStyle: 'none', fontSize: 12, color: 'text.secondary' }}>
       {items.map((k) => (
         <Box component="li" key={k} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
           <Box sx={{ width: 22, display: 'inline-flex', justifyContent: 'center', transform: 'scale(0.85)' }}>
-            <Mark cell={{ kind: k, choice: k === 'proposed' || k === 'reserve' || k === 'queued_no_slot' || k === 'placed_elsewhere' ? 1 : undefined }} />
+            <Mark cell={{ kind: k, inLine: k === 'next_in_line' ? 1 : undefined }} />
           </Box>
           {CELL[k].label}
         </Box>
       ))}
       <Box component="li" sx={{ color: 'text.secondary' }}>
-        Number: their order of choice
+        Number: place in line if an offer falls through
       </Box>
     </Box>
   );
@@ -357,10 +368,10 @@ function CellPopover({ pid, oid, anchor, onClose }: { pid: string; oid: string; 
   const buttons: ReactNode[] = [];
   if (cell.kind === 'proposed') {
     buttons.push(
-      <Button key="acc" size="small" variant="contained" onClick={run(() => act.accept({ patientId: pid, openingId: oid, choice: cell.choice ?? 1 }))}>
+      <Button key="acc" size="small" variant="contained" onClick={run(() => act.accept({ patientId: pid, openingId: oid }))}>
         Accept…
       </Button>,
-      <Button key="dis" size="small" variant="outlined" color="inherit" onClick={run(() => act.dismiss({ patientId: pid, openingId: oid, choice: cell.choice ?? 1 }))}>
+      <Button key="dis" size="small" variant="outlined" color="inherit" onClick={run(() => act.dismiss({ patientId: pid, openingId: oid }))}>
         Dismiss…
       </Button>,
     );
@@ -412,18 +423,23 @@ function CellPopover({ pid, oid, anchor, onClose }: { pid: string; oid: string; 
       <Box sx={{ fontSize: 13, lineHeight: 1.5 }}>{describe(board, pv, ov, cell)}</Box>
       {buttons.length ? <Row>{buttons}</Row> : null}
       <Row sx={{ fontSize: 12.5 }}>
+        <Button size="small" color="inherit" onClick={run(() => ui.selectPair(pid, oid))} sx={{ px: 0.5, minWidth: 0 }}>
+          Focus on both
+        </Button>
         <Button size="small" color="inherit" onClick={run(() => ui.focusPatient(pid))} sx={{ px: 0.5, minWidth: 0 }}>
-          Focus on the patient
+          The patient
         </Button>
         <Button
           size="small"
           color="inherit"
           onClick={run(() => {
-            if (!(ui.selection?.kind === 'opening' && ui.selection.id === oid)) ui.selectOpening(oid);
+            // patches made in one tick merge, the last one wins: clear the patient after
+            if (ui.selection.openingId !== oid) ui.selectOpening(oid);
+            ui.clearPatient();
           })}
           sx={{ px: 0.5, minWidth: 0 }}
         >
-          Focus on the slot
+          The slot
         </Button>
       </Row>
     </Popover>

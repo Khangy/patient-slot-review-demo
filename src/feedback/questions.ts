@@ -65,19 +65,34 @@ export const QUESTIONS: Question[] = [
     options: ['Call next business day, hold 7 days (as shown)', 'Call in 2 business days, hold 7 days', 'Call next business day, hold 14 days'],
   },
   {
-    id: 'ranking',
-    boards: ['SR2', 'A5'],
-    prompt: 'When a slot has more candidates than slots, what should rank them?',
-    context: 'The demo ranks by time on the queue and places each patient into their highest choice with room. The real optimizer weighs fit.',
-    options: ['Time on the queue (as in the demo)', 'Clinical urgency set by the physician', 'The optimizer\'s fit score', 'Decided at the meeting, no automatic rank'],
-    lookAt: { label: 'Select SOLVE-Lung 3 › Arm A', to: '/slot-review?opening=solve-a' },
+    id: 'optimizer-weights',
+    boards: ['SR9', 'A5'],
+    prompt: 'Besides seating the most patients, should anything else count when the optimizer plans?',
+    context:
+      'Today the app (and this demo) treats every queued slot the same: the plan seats the most patients and ties go to whoever entered the pool first. So Rossi is proposed for SLV-417 Cohort A, which lets Siddiqui have SOLVE-Lung 3 Arm A. The matching playground also tries a patient\'s order of choice, slots about to close, and urgency.',
+    options: [
+      'No: seat the most, ties by time in the pool (the app today)',
+      'Also the patient\'s order of choice (playground: Patient choice)',
+      'Also slots about to close (playground: Slot urgency)',
+      'Also urgency set by the physician (playground: Patient urgency)',
+    ],
+    lookAt: { label: 'Select Rossi, Elena', to: '/slot-review?patient=p-rossi' },
   },
   {
-    id: 'first-choice',
-    boards: ['A5'],
-    prompt: 'How much should a patient\'s first choice count?',
-    context: 'Proposals say "1st choice" or "2nd choice" (Mei Zhou is proposed for her 2nd choice).',
-    options: ['Strongly: place by first choice whenever they fit', 'As a tie-breaker after fit', 'Do not use the order of choice'],
+    id: 'decline-seniority',
+    boards: ['SR9'],
+    prompt: 'When a patient declines an offer, should they keep their place in the pool?',
+    context:
+      'Ties go to whoever entered the pool first. The matching playground moves a patient who declines to the back for future ties and keeps the place of one who fails screening. The app keeps it either way (and resets it whenever the patient is re-matched).',
+    options: ['Keep their place either way', 'Back of the pool after a decline, keep it after a screen fail (playground)', 'Back of the pool for that trial only'],
+  },
+  {
+    id: 'dismiss-returns',
+    boards: ['A6'],
+    prompt: 'After the team dismisses a proposal, may the optimizer propose it again?',
+    context:
+      'In this demo a dismissed pairing stays out until someone undoes it. In the app a dismissal only closes that proposal: the next run (nightly, or Run optimizer) may propose the same patient for the same slot.',
+    options: ['Stays out until the team undoes it (as in the demo)', 'Can come back on the next run (the app today)', 'Comes back only when something changes (staging, a new slot)'],
   },
   {
     id: 'evidence',
@@ -91,9 +106,10 @@ export const QUESTIONS: Question[] = [
     id: 'drag-place',
     boards: ['SR5'],
     prompt: 'When someone drags a patient onto a slot the optimizer gave to someone else, what should happen?',
-    context: 'Try dragging Siddiqui, Bilal onto SOLVE-Lung 3 › Arm A. The dialog asks why, shows whose proposal moves, then holds the slot like Accept.',
+    context:
+      'Try dragging Rossi, Elena onto SOLVE-Lung 3 › Arm A (say her patient prefers it). The dialog asks why, shows who loses a slot (Siddiqui), then holds the slot like Accept.',
     options: [
-      'Place by hand with a reason; the last-ranked proposal moves (as shown)',
+      'Place by hand with a reason; the plan re-seats everyone else around it (as shown)',
       'Only the PI can place by hand',
       'It becomes a proposal the meeting still has to accept',
       'Do not allow it: only the optimizer proposes',
