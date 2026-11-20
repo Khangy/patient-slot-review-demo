@@ -58,7 +58,7 @@ function ReviewStrip({ view }: { view: PatientView }) {
   } else if (view.decision?.kind === 'proposed') {
     body = (
       <Typography variant="body2">
-        <b>Proposed:</b> {label(view.decision.openingId)}. The team accepts or dismisses it at the meeting.
+        <b>Optimizer proposed slot:</b> {label(view.decision.openingId)}. The team accepts or dismisses it at the meeting.
       </Typography>
     );
   } else if (view.blocked) {
@@ -71,14 +71,14 @@ function ReviewStrip({ view }: { view: PatientView }) {
     const by = view.patient.addedToReviewBy;
     body = (
       <Typography variant="body2">
-        <b>Nothing queued yet.</b>
+        <b>Nothing queued for Optimized Match yet.</b>
         {by ? ` Added to the review by ${member(by).short} to discuss.` : ''}
       </Typography>
     );
   } else {
     body = (
       <Typography variant="body2" color="text.secondary">
-        Queued for {view.patient.queue.map((e) => label(e.openingId)).join(', ')}.
+        Queued for Optimized Match: {view.patient.queue.map((e) => label(e.openingId)).join(', ')}.
       </Typography>
     );
   }

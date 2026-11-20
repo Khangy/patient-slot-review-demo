@@ -21,7 +21,7 @@ import { TEAM, SITE_NAME } from '@/domain/seed';
 import { addDays, fmtShort, fmtTime, fmtWeekday, fmtWhen, nextBusinessDay, TODAY } from '@/domain/dates';
 import { labelFor, member } from '@/domain/names';
 import { dxStage, keyMarker } from '@/domain/summary';
-import { alternativesFor, dismissReasonLabel, PLACE_REASONS, simulatePlace } from '@/domain/board';
+import { alternativesFor, dismissReasonLabel, PLACE_REASONS, simulatePlace, simulateRevert, type RevertOutcome } from '@/domain/board';
 import { useStore, type AcceptPlan } from '@/state/store';
 import { useToast } from '@/components/Toast';
 import { PersonTag, ToneChip, Mono } from '@/components/ui';
@@ -229,7 +229,7 @@ export function PlaceDialog({
   const intro = (
     <Stack spacing={1.5}>
       <Muted size={13.5}>
-        {queued ? 'On their queue.' : 'Not on their queue for Optimized Match.'} Placing by hand deviates from the optimizer's plan and holds the slot, like
+        {queued ? 'Queued for Optimized Match.' : 'Not queued for Optimized Match.'} Placing by hand deviates from the optimizer's plan and holds the slot, like
         Accept.
       </Muted>
       {p.status !== 'seeking' ? <Muted size={13}>Their status changes from {PATIENT_STATUS[p.status].label} to Seeking.</Muted> : null}
@@ -346,6 +346,127 @@ export function DismissDialog({
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="contained" color="error" disabled={!reason} onClick={() => reason && onConfirm(reason, note)}>
           Dismiss
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+// ── Revert after Accept (SR10) ──────────────────────────────────────────
+
+const OUTCOMES: { value: RevertOutcome; label: string; help: string }[] = [
+  { value: 'reopen', label: 'Back to the optimizer', help: 'The patient goes back into the pool. The optimizer may propose the same slot again.' },
+  {
+    value: 'dismiss',
+    label: 'Release and dismiss',
+    help: 'The slot is released and this pairing is dismissed, so it is not proposed again until someone undoes the dismissal.',
+  },
+];
+
+export function RevertDialog({
+  pairing,
+  onClose,
+  onConfirm,
+}: {
+  pairing: Pairing;
+  onClose: () => void;
+  onConfirm: (outcome: RevertOutcome, reason: DismissReason | null, note: string) => void;
+}) {
+  const { state, board } = useStore();
+  const ui = useBoardUi();
+  const [outcome, setOutcome] = useState<RevertOutcome | null>(null);
+  const [reason, setReason] = useState<DismissReason | null>(null);
+  const [note, setNote] = useState('');
+  // Re-planned once, when the dialog opens: what each outcome would change.
+  const [sims] = useState(() => ({
+    reopen: simulateRevert(state, board, pairing, 'reopen'),
+    dismiss: simulateRevert(state, board, pairing, 'dismiss'),
+  }));
+  const { patientId, openingId } = pairing;
+  const label = (oid: string) => labelFor(state.trials, oid);
+  const who = ui.nameOf(patientId);
+  const what = pairing.status === 'pre_screening' ? 'In pre-screening since' : pairing.placedByHand ? 'Placed by hand' : 'Accepted';
+  const open = pairing.steps.filter((s) => !s.doneAt && !s.auto && s.assignee);
+  const done = pairing.steps.filter((s) => s.doneAt && s.kind !== 'accepted');
+  const sim = outcome ? sims[outcome] : null;
+  const lines = sim
+    ? [
+        sim.own.to
+          ? `${who} is proposed for ${label(sim.own.to)}${sim.own.to === openingId ? ' again' : ''}.`
+          : `${who} has no proposal${sim.own.blockedLabel ? ` (${sim.own.blockedLabel.toLowerCase()})` : ''}.`,
+        ...placeChangeLines({ changes: sim.changes }, patientId, ui.nameOf, label),
+      ]
+    : [];
+
+  return (
+    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ pb: 0.5 }}>
+        Revert {who} → {labelFor(state.trials, openingId, true)}
+      </DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ pt: 0.5 }}>
+          <Muted size={13.5}>
+            {what} {fmtWhen(pairing.decidedAt)} by {member(pairing.decidedBy).short}. Reverting releases the slot
+            {open.length ? ` and cancels the open steps: ${open.map((s) => `${s.label.toLowerCase()} (${member(s.assignee!).short})`).join(', ')}` : ''}.
+            {done.length ? ` Already done: ${done.map((s) => s.label.toLowerCase()).join(', ')}; Activity History keeps the record.` : ''}
+          </Muted>
+          <Box>
+            <Box sx={{ fontWeight: 600, fontSize: 13.5, mb: 0.75 }} id="revert-outcome-label">
+              What happens to {who}?
+            </Box>
+            <ToggleButtonGroup exclusive value={outcome} onChange={(_, v: RevertOutcome | null) => setOutcome(v)} aria-labelledby="revert-outcome-label" sx={chipGroupSx}>
+              {OUTCOMES.map((o) => (
+                <ToggleButton key={o.value} value={o.value} size="small">
+                  {o.label}
+                </ToggleButton>
+              ))}
+            </ToggleButtonGroup>
+            {outcome ? (
+              <Box sx={{ mt: 0.75 }}>
+                <Muted size={12.5}>{OUTCOMES.find((o) => o.value === outcome)?.help}</Muted>
+              </Box>
+            ) : null}
+          </Box>
+          {outcome === 'dismiss' ? (
+            <ToggleButtonGroup exclusive value={reason} onChange={(_, v: DismissReason | null) => setReason(v)} aria-label="Reason" sx={chipGroupSx}>
+              {REASONS.map((r) => (
+                <ToggleButton key={r.value} value={r.value} size="small">
+                  {r.label}
+                </ToggleButton>
+              ))}
+            </ToggleButtonGroup>
+          ) : null}
+          {outcome ? (
+            <TextField
+              label="Note (optional)"
+              placeholder={outcome === 'dismiss' ? 'e.g. declined at the consent call' : 'e.g. accepted for the wrong patient'}
+              size="small"
+              fullWidth
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+          ) : null}
+          {sim ? (
+            <Box sx={{ p: 1.25, border: 1, borderColor: 'divider', borderRadius: 1.5 }}>
+              <Box sx={{ fontWeight: 600, fontSize: 13, mb: 0.5 }}>What changes</Box>
+              <Box component="ul" sx={{ m: 0, pl: 2.25, fontSize: 13, lineHeight: 1.55 }}>
+                {lines.map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </Box>
+            </Box>
+          ) : null}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button
+          variant="contained"
+          color="error"
+          disabled={!outcome || (outcome === 'dismiss' && !reason)}
+          onClick={() => outcome && onConfirm(outcome, reason, note)}
+        >
+          Revert
         </Button>
       </DialogActions>
     </Dialog>

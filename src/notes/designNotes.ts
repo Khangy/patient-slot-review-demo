@@ -44,7 +44,7 @@ const N: DesignNoteEntry[] = [
     after: 'When the record changed after the last check, Trial Options says so and offers Re-check now.' },
   { id: '08', area: 'Patient pages', title: 'Slot counts name their scope', tags: ['Decision'],
     before: 'One row read 6 slots in the list (the trial) and 0 in the detail (the cohort).',
-    after: 'Every count names its scope: "0 open in Arm A1 · 4 in the trial". A wait shows how many others watch the same opening.' },
+    after: 'Every count names its scope: "0 open in Cohort 2 · 1 in the trial". A wait shows how many others watch the same opening.' },
   { id: '14', area: 'Patient pages', title: 'Calmer copy', tags: ['Small PR'],
     before: 'A trial without entered criteria showed a red alert. The cost of a placement read "blocks 1".',
     after: 'Missing setup is said calmly with a way to fix it. The cost is said in patients: "1 other patient needs it".' },
@@ -88,10 +88,10 @@ const N: DesignNoteEntry[] = [
     after: 'Near future and slot waits count the opening\'s own slots; watchers show under the opening they wait for.' },
   { id: 'A9', area: 'Slot Allocation', title: 'Names on a shared screen', tags: ['Decision'],
     before: 'The board showed full names and MRNs while the Patients list masked them.',
-    after: 'Try the Names switch above the board: full names, meeting form (Samuel O.), or follow the Profile switch.' },
+    after: 'Try the Names switch above the board: full names, meeting form (Priya N.), or follow the Profile switch.' },
   { id: 'A10', area: 'Slot Allocation', title: 'One set of words', tags: ['Decision'],
     before: 'Slot Allocation / Preliminary Slot Allocation Chart / Assignments; slot, seat, offer, placement, baseline, deviation, artifact.',
-    after: 'One page name and one word per thing: slot, proposal, Queued for Optimized Match, meeting snapshot.' },
+    after: 'One page name and one word per thing: slot, Optimizer proposed patient / slot, Queued for Optimized Match, meeting snapshot.' },
 
   // ── Patient Slot Review ──
   { id: 'SR1', area: 'Patient Slot Review', title: 'One board for the Thursday meeting', tags: ['Decision', 'Migration'],
@@ -108,10 +108,10 @@ const N: DesignNoteEntry[] = [
     after: 'Near future lists openings on hold with dates and slots that may come back, with who waits. Blocked lists every unplaced patient with the real reason.' },
   { id: 'SR5', area: 'Patient Slot Review', title: 'Drag a patient onto a slot', tags: ['Decision'],
     before: 'Only the optimizer put a patient in a slot. To override it, the team dismissed proposals one by one until the right patient moved up.',
-    after: 'Drag a patient card onto a slot. Every slot says whether it can take them before you let go. Proposed there: Accept. Otherwise: Place by hand, with a reason and a preview of whose proposal moves. "Place here" under each slot does the same without dragging.' },
+    after: 'Drag a patient card onto a slot. Every slot says whether it can take them before you let go. Optimizer proposed slot: Accept. Otherwise: Place by hand, with a reason and a preview of whose proposal moves. "Place here" under each slot does the same without dragging.' },
   { id: 'SR6', area: 'Patient Slot Review', title: 'Lists narrow to the selection', tags: ['Small PR'],
     before: 'Nov 12 demo: selecting a patient greyed out the slots that did not apply, so every list stayed as long as before.',
-    after: 'Selecting a patient narrows Slots and Optimizer decisions to what applies to them, grouped (proposed, on their queue, also fits). Selecting a slot narrows Patients to who holds it, its proposals, who is next in line and who else is queued. "Show all" brings the rest back.' },
+    after: 'Selecting a patient narrows Slots and Optimizer decisions to what applies to them, grouped (optimizer proposed slot, queued for Optimized Match, also fits). Selecting a slot narrows Patients to who holds it, the optimizer proposed patient, who is next in line and who else is queued for Optimized Match. "Show all" brings the rest back.' },
   { id: 'SR7', area: 'Patient Slot Review', title: 'Board views', tags: ['Decision'],
     before: 'One card size for everything.',
     after: 'Cards, Compact (two lines), List (one row each) or Matrix (every patient against every open slot; a cell opens Accept, Dismiss, Place or Queue for that pairing).' },
@@ -121,6 +121,9 @@ const N: DesignNoteEntry[] = [
   { id: 'SR9', area: 'Patient Slot Review', title: 'The app\'s optimizer', tags: ['Keep as is'],
     before: 'Nov 18 demo: patients placed one at a time, longest on the queue first, into their highest choice with room. That is not how SphinxMatch decides.',
     after: 'The same solver as the app and the matching playground: every queued slot the patient fits counts the same, the plan seats the most patients, ties go to whoever entered the pool first, and next in line comes from the app\'s backfill re-solve.' },
+  { id: 'SR10', area: 'Patient Slot Review', title: 'Revert after Accept', tags: ['Decision'],
+    before: 'Nov 20 demo: an accepted or placed slot could be undone only from the toast, right after Accept. Once steps were assigned, the slot stayed held.',
+    after: 'Revert… on an accepted, placed or pre-screening pairing releases the slot and cancels its open steps. Back to the optimizer, or release and dismiss with a reason; the dialog shows who gets the slot. A step marked done by mistake has Undo, latest first, which also puts back what it changed (the consent hold, pre-screening).' },
 ];
 
 export const DESIGN_NOTES: Record<string, DesignNoteEntry> = Object.fromEntries(N.map((n) => [n.id, n]));

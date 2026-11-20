@@ -208,6 +208,15 @@ export interface Step {
   doneAt?: string; // ISO datetime
   doneBy?: UserId;
   auto?: boolean;
+  /** what marking it done changed, so Undo can put it back */
+  undo?: {
+    holdUntil?: string;
+    status?: 'accepted' | 'pre_screening';
+    /** the step it added (labs done adds the results review) */
+    addedStepId?: string;
+    /** the next step's due date, before and after it was set */
+    next?: { stepId: string; due?: string; dueText?: string; set: string };
+  };
 }
 
 export interface TrailEntry {

@@ -206,6 +206,16 @@ const resectedCtdna: Criterion = {
 // ── Criteria per opening ────────────────────────────────────────────────
 
 export const CRITERIA: Record<string, Criterion[]> = {
+  'a-1': [cancerIn(['NSCLC']), stageIn(['IV']), afterPlatinumIO],
+  'a-2': [cancerIn(['NSCLC']), stageIn(['IV']), pdl1AtLeast(50), afterPlatinumIO],
+  'a-3': [cancerIn(['NSCLC']), stageIn(['IV']), firstLine],
+  'b-1': [cancerIn(['NSCLC']), stageIn(['IV']), histologyIs('non-squamous'), noEgfrAlk, afterPlatinumIO],
+  'b-2': [cancerIn(['NSCLC']), stageIn(['IV']), histologyIs('squamous'), afterPlatinumIO],
+  'b-3': [cancerIn(['NSCLC']), stageIn(['IV']), histologyIs('non-squamous'), noEgfrAlk, firstLine],
+  'c-1': [cancerIn(['NSCLC']), stageIn(['IV']), krasG12C, afterPlatinumIO],
+  'c-2': [cancerIn(['NSCLC']), stageIn(['IV']), krasG12C, firstLine, pdl1AtLeast(1)],
+  'c-3': [anySolidTumor, stageIn(['IV']), krasG12C, afterStandardTherapy],
+  // earlier seeds' openings (SLV-417, SOLVE-Lung 3, SPX-201, ctDNA-Guided Adjuvant Colon)
   'slv-dl3': [anySolidTumor, stageIn(['IV']), krasG12C, afterStandardTherapy],
   'slv-a': [cancerIn(['NSCLC']), stageIn(['IV']), krasG12C, afterPlatinumIO],
   'slv-b': [cancerIn(['NSCLC']), stageIn(['IV']), krasG12C, firstLine, pdl1AtLeast(1)],

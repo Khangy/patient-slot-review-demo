@@ -102,17 +102,17 @@ export function statusSummary(view: PatientView, board: Board, trials: Trial[]):
   } else if (p.status === 'not_seeking') {
     sub = p.notSeekingReason ? NOT_SEEKING_LABEL[p.notSeekingReason] : undefined;
   } else if (view.decision?.kind === 'proposed') {
-    sub = `Proposed · ${label(view.decision.openingId)}`;
+    sub = `Optimizer proposed slot · ${label(view.decision.openingId)}`;
   } else if (view.blocked) {
     sub = `Blocked · ${view.blocked.label.toLowerCase()}`;
   } else if (p.queue.length) {
-    sub = `Queued · ${label(p.queue[0].openingId)}`;
+    sub = `Queued for Optimized Match · ${label(p.queue[0].openingId)}`;
   } else if (p.watches.length) {
     const w = p.watches[0];
     sub = `Watching · ${w.openingId ? label(w.openingId) : `${trials.find((t) => t.id === w.trialId)?.short} (any opening)`}`;
   } else if (p.status === 'seeking') {
     const n = view.possibleNow.length;
-    sub = n ? `Nothing queued · ${n} match${n === 1 ? '' : 'es'} with open slots` : 'Nothing queued';
+    sub = n ? `Nothing queued for Optimized Match · ${n} match${n === 1 ? '' : 'es'} with open slots` : 'Nothing queued for Optimized Match';
   }
   return { label: base.label, tone: base.tone, sub };
 }

@@ -119,7 +119,7 @@ export function nextStepFor(view: PatientView, board: Board, trials: Trial[], me
     const open = view.possibleNow.map(label);
     return {
       group: 'needs_you',
-      verb: 'Nothing queued',
+      verb: 'Nothing queued for Optimized Match',
       status: `seeking ${days} day${days === 1 ? '' : 's'}`,
       sub: open.length
         ? `${open.length} match${open.length === 1 ? '' : 'es'} with open slots: ${open.slice(0, 2).join(', ')}${open.length > 2 ? ` +${open.length - 2}` : ''}`
@@ -152,7 +152,7 @@ export function nextStepFor(view: PatientView, board: Board, trials: Trial[], me
         group: 'coming_up',
         verb: "In Thursday's review",
         status: 'today',
-        sub: `Proposed: ${label(view.decision.openingId)}`,
+        sub: `Optimizer proposed slot: ${label(view.decision.openingId)}`,
         tone: 'blue',
         sortDate: TODAY,
       };
@@ -234,7 +234,7 @@ export function nextStepFor(view: PatientView, board: Board, trials: Trial[], me
   if (p.queue.length) {
     return {
       group: 'nothing_due',
-      verb: 'Queued',
+      verb: 'Queued for Optimized Match',
       status: label(p.queue[0].openingId),
       date: `since ${fmtShort(p.queue[0].queuedOn)}`,
       tone: 'grey',

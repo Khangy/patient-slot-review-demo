@@ -32,14 +32,14 @@ export const QUESTIONS: Question[] = [
     id: 'in-review',
     boards: ['SR1'],
     prompt: 'Who belongs in "Patients in review"?',
-    context: 'Today the board lists everyone queued for an opening, plus patients a team member adds by hand (James Whitfield was added with nothing queued).',
+    context: 'Today the board lists everyone queued for an opening, plus patients a team member adds by hand with nothing queued.',
     options: ['Everyone queued, plus patients added by hand (as shown)', 'Only patients the team adds to the meeting'],
   },
   {
     id: 'watchlist',
     boards: ['SR1', 'SR4', 'A8'],
     prompt: 'Where should patients who are watching a trial appear?',
-    context: 'Watchers waiting for a slot show under the opening in Near future (Thu Nguyen and Priya Nair wait for SPX-201 › Arm A1).',
+    context: 'Watchers waiting for a slot show under the opening in Near future, next to who is queued for it and who fits.',
     options: ['Inside Near future and Blocked (as shown)', 'A separate Watchlist tab on the board', 'Both'],
   },
   {
@@ -47,7 +47,7 @@ export const QUESTIONS: Question[] = [
     boards: ['A9'],
     prompt: 'Names on a projected meeting screen?',
     context: 'The Patients list masks names unless the Profile switch is on. The meeting board is likely to be on a shared screen. Try the Names switch above the board.',
-    options: ['Full names (as today)', 'Meeting form: "Samuel O." and the last 4 of the MRN', 'Follow the Profile masking switch'],
+    options: ['Full names (as today)', 'Meeting form: "Priya N." and the last 4 of the MRN', 'Follow the Profile masking switch'],
     lookAt: { label: 'Patient Slot Review', to: '/slot-review' },
   },
   {
@@ -69,14 +69,14 @@ export const QUESTIONS: Question[] = [
     boards: ['SR9', 'A5'],
     prompt: 'Besides seating the most patients, should anything else count when the optimizer plans?',
     context:
-      'Today the app (and this demo) treats every queued slot the same: the plan seats the most patients and ties go to whoever entered the pool first. So Rossi is proposed for SLV-417 Cohort A, which lets Siddiqui have SOLVE-Lung 3 Arm A. The matching playground also tries a patient\'s order of choice, slots about to close, and urgency.',
+      'Today the app (and this demo) treats every queued slot the same: the plan seats the most patients and ties go to whoever entered the pool first. So Bell, the only patient with KRAS G12C, is proposed for Trial C Cohort 1, which leaves Trial A for Nair and Trial B for Hughes. The matching playground also tries a patient\'s order of choice, slots about to close, and urgency.',
     options: [
       'No: seat the most, ties by time in the pool (the app today)',
       'Also the patient\'s order of choice (playground: Patient choice)',
       'Also slots about to close (playground: Slot urgency)',
       'Also urgency set by the physician (playground: Patient urgency)',
     ],
-    lookAt: { label: 'Select Rossi, Elena', to: '/slot-review?patient=p-rossi' },
+    lookAt: { label: 'Select Bell, Marcus', to: '/slot-review?patient=p-bell' },
   },
   {
     id: 'decline-seniority',
@@ -100,19 +100,33 @@ export const QUESTIONS: Question[] = [
     prompt: 'Is "Why this match" enough to queue a patient before full criteria are entered?',
     context: 'Trial Options lists the checks the matcher ran against the record (diagnosis, stage, biomarkers, prior therapy).',
     options: ['Yes', 'Yes, with a reminder to confirm the criteria', 'No, wait until criteria are entered'],
-    lookAt: { label: 'Elena Rossi › Trial Options', to: '/patients/p-rossi?tab=options' },
+    lookAt: { label: 'Priya Nair › Trial Options', to: '/patients/p-nair?tab=options' },
   },
   {
     id: 'drag-place',
     boards: ['SR5'],
     prompt: 'When someone drags a patient onto a slot the optimizer gave to someone else, what should happen?',
     context:
-      'Try dragging Rossi, Elena onto SOLVE-Lung 3 › Arm A (say her patient prefers it). The dialog asks why, shows who loses a slot (Siddiqui), then holds the slot like Accept.',
+      'Try dragging Bell, Marcus onto Trial A › Cohort 1 (say his patient prefers it). The dialog asks why, shows who loses a slot (Nair), then holds the slot like Accept.',
     options: [
       'Place by hand with a reason; the plan re-seats everyone else around it (as shown)',
       'Only the PI can place by hand',
       'It becomes a proposal the meeting still has to accept',
       'Do not allow it: only the optimizer proposes',
+    ],
+    lookAt: { label: 'Patient Slot Review', to: '/slot-review' },
+  },
+  {
+    id: 'revert',
+    boards: ['SR10'],
+    prompt: 'After a slot is accepted and its steps assigned, how should the team take it back?',
+    context:
+      'Revert… on an accepted card releases the slot and cancels the open steps. The team picks: back to the optimizer (it may propose the same slot again) or release and dismiss with a reason. Try it on Bell after accepting him.',
+    options: [
+      'Ask each time, as shown',
+      'Always back to the optimizer',
+      'Always release and dismiss with a reason',
+      'Only the PI can revert after the consent call',
     ],
     lookAt: { label: 'Patient Slot Review', to: '/slot-review' },
   },

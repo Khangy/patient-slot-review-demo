@@ -40,13 +40,13 @@ export function SlotsColumn() {
   const soon = selPid && !showAll ? soonFor : board.nearFuture;
 
   const decision = selPid ? board.patientById[selPid]?.decision : undefined;
-  const theirsTitle = decision?.kind === 'accepted' ? 'Accepted' : decision?.kind === 'pre_screening' ? 'Pre-screening' : 'Proposed';
+  const theirsTitle = decision?.kind === 'accepted' ? 'Accepted' : decision?.kind === 'pre_screening' ? 'Pre-screening' : 'Optimizer proposed slot';
 
   let now: ReactNode;
   if (narrow) {
     const groups = [
       { title: theirsTitle, ids: narrow.theirs },
-      { title: 'On their queue', ids: narrow.queued },
+      { title: 'Queued for Optimized Match', ids: narrow.queued },
       { title: 'Also fits, not queued', ids: narrow.fits },
     ];
     now = (
@@ -151,7 +151,7 @@ function countsLine(ov: OpeningView): string {
   const held = [accepted && `${accepted} accepted`, pre && `${pre} in pre-screening`].filter(Boolean).join(' · ');
   let line: string;
   if (ov.openNow === 0) {
-    line = ['0 open here', queuedEligible && `${queuedEligible} queued`, ov.watching.length && `${ov.watching.length} watching`].filter(Boolean).join(' · ');
+    line = ['0 open here', queuedEligible && `${queuedEligible} queued for Optimized Match`, ov.watching.length && `${ov.watching.length} watching`].filter(Boolean).join(' · ');
   } else if (ov.proposed.length === 0) {
     line = `${ov.openNow} open · ${queuedEligible ? 'none proposed' : 'no one queued'}`;
   } else {
@@ -182,17 +182,18 @@ function OpeningCard({ ov, showTrial = false, narrowed = false }: { ov: OpeningV
     const d = pv?.decision;
     const cand = ov.candidates.find((c) => c.patientId === selPid);
     if (d && d.openingId === o.id && d.kind !== 'dismissed') {
-      const label = d.kind === 'proposed' ? `Proposed for ${pname}` : d.kind === 'accepted' ? `Accepted for ${pname}` : `Pre-screening: ${pname}`;
+      const label = d.kind === 'proposed' ? `Optimizer proposed for patient: ${pname}` : d.kind === 'accepted' ? `Accepted for ${pname}` : `Pre-screening: ${pname}`;
       pill = { label, tone: DECISION[d.kind].tone };
     } else if (cand) {
       if (cand.status === 'dismissed') pill = { label: `Dismissed for ${pname}`, tone: 'grey' };
-      else if (cand.status === 'not_eligible') pill = { label: 'Queued, not eligible', tone: 'red' };
-      else if (ov.openNow === 0) pill = { label: 'Queued, no open slot', tone: 'amber' };
-      else if (cand.status === 'next_in_line') pill = { label: `Queued · next in line${cand.inLine && cand.inLine > 1 ? ` (${cand.inLine})` : ''}`, tone: 'amber' };
-      else if (cand.status === 'queued') pill = { label: 'Queued · every slot proposed', tone: 'amber' };
-      else if (cand.status === 'placed_elsewhere') pill = { label: 'Queued · placed elsewhere', tone: 'grey' };
-    } else if (pv?.possibleNow.includes(o.id)) {
-      pill = { label: narrowed ? 'Fits, not queued' : `Possible slot for ${pname} · not queued`, tone: 'teal' };
+      else if (cand.status === 'not_eligible') pill = { label: 'Queued for Optimized Match, not eligible', tone: 'red' };
+      else if (ov.openNow === 0) pill = { label: 'Queued for Optimized Match, no open slot', tone: 'amber' };
+      else if (cand.status === 'next_in_line') pill = { label: `Queued for Optimized Match · next in line${cand.inLine && cand.inLine > 1 ? ` (${cand.inLine})` : ''}`, tone: 'amber' };
+      else if (cand.status === 'queued') pill = { label: 'Queued for Optimized Match · every slot proposed', tone: 'amber' };
+      else if (cand.status === 'placed_elsewhere') pill = { label: 'Queued for Optimized Match · placed elsewhere', tone: 'grey' };
+    } else if (pv?.possibleNow.includes(o.id) && !narrowed) {
+      // narrowed, the "Also fits, not queued" heading already says it
+      pill = { label: `Possible slot for ${pname} · not queued`, tone: 'teal' };
     }
     if (!pill) dim = !narrowed;
   }
@@ -223,7 +224,6 @@ function OpeningCard({ ov, showTrial = false, narrowed = false }: { ov: OpeningV
       </Button>
     ) : null;
 
-  const inLine = ov.nextInLine.length;
   const pillChip = pill ? <ToneChip tone={pill.tone} variant={pill.tone === 'teal' ? 'outline' : 'solid'} label={pill.label} size="tiny" /> : null;
   const cardProps = {
     selected,
@@ -292,11 +292,8 @@ function OpeningCard({ ov, showTrial = false, narrowed = false }: { ov: OpeningV
                 <Muted size={11}>open</Muted>
               </Box>
             </Box>
-            <Box sx={{ fontSize: 12.5 }}>{countsLine(ov)}</Box>
             <Row>
-              {ov.candidates.length ? <ToneChip tone="grey" label={`${ov.candidates.length} queued`} size="tiny" /> : null}
-              {inLine ? <ToneChip tone="amber" label={`${inLine} next in line`} size="tiny" /> : null}
-              {ov.fitNotQueued.length ? <ToneChip tone="teal" variant="outline" label={`${ov.fitNotQueued.length} fit, not queued`} size="tiny" /> : null}
+              {ov.candidates.length ? <ToneChip tone="grey" label={`${ov.candidates.length} queued for Optimized Match`} size="tiny" /> : null}
               {ov.watching.length ? <ToneChip tone="blue" variant="outline" label={`${ov.watching.length} watching`} size="tiny" /> : null}
               {ov.blocks.length ? <ToneChip tone="red" label={`blocks ${ov.blocks.length}`} size="tiny" /> : null}
             </Row>
@@ -341,7 +338,7 @@ function OpeningDetail({ ov }: { ov: OpeningView }) {
       }}
     >
       <Box>
-        <Overline>Queued here</Overline>
+        <Overline>Queued for Optimized Match</Overline>
         {eligible.length === 0 ? <Muted>No one is queued for this opening.</Muted> : null}
         <Box component="ol" sx={{ listStyle: 'none', m: 0, p: 0, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
           {eligible.map((c) => {

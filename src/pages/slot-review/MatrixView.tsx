@@ -40,12 +40,12 @@ interface Cell {
 const CELL: Record<CellKind, { label: string; tone: ToneName; mark: 'solid' | 'outline' | 'dashed' | 'dot' | 'ring' | 'none' }> = {
   accepted: { label: 'Accepted', tone: 'green', mark: 'solid' },
   pre_screening: { label: 'Pre-screening', tone: 'purple', mark: 'solid' },
-  proposed: { label: 'Proposed', tone: 'blue', mark: 'solid' },
-  next_in_line: { label: 'Queued, next in line', tone: 'amber', mark: 'outline' },
-  queued: { label: 'Queued, every slot proposed', tone: 'amber', mark: 'outline' },
-  placed_elsewhere: { label: 'Queued, placed elsewhere', tone: 'grey', mark: 'outline' },
-  queued_no_slot: { label: 'Queued, no open slot', tone: 'amber', mark: 'dashed' },
-  not_eligible: { label: 'Queued, not eligible', tone: 'red', mark: 'outline' },
+  proposed: { label: 'Optimizer proposed', tone: 'blue', mark: 'solid' },
+  next_in_line: { label: 'Queued for Optimized Match, next in line', tone: 'amber', mark: 'outline' },
+  queued: { label: 'Queued for Optimized Match, every slot proposed', tone: 'amber', mark: 'outline' },
+  placed_elsewhere: { label: 'Queued for Optimized Match, placed elsewhere', tone: 'grey', mark: 'outline' },
+  queued_no_slot: { label: 'Queued for Optimized Match, no open slot', tone: 'amber', mark: 'dashed' },
+  not_eligible: { label: 'Queued for Optimized Match, not eligible', tone: 'red', mark: 'outline' },
   dismissed: { label: 'Dismissed', tone: 'grey', mark: 'outline' },
   fits: { label: 'Fits, not queued', tone: 'teal', mark: 'dot' },
   fits_no_slot: { label: 'Fits, no open slot', tone: 'teal', mark: 'ring' },
@@ -103,24 +103,24 @@ function Mark({ cell }: { cell: Cell }) {
 function describe(board: Board, pv: PatientView, ov: OpeningView, cell: Cell): string {
   switch (cell.kind) {
     case 'proposed':
-      return 'Proposed by the optimizer: of every plan, the one that seats the most patients.';
+      return 'Optimizer proposed: of every plan, the one that seats the most patients.';
     case 'accepted':
       return pv.fixedPairing?.placedByHand ? 'Placed by hand at the meeting.' : 'Accepted at the meeting.';
     case 'pre_screening':
       return 'In pre-screening for this slot.';
     case 'next_in_line':
-      return `Queued. Every open slot here is proposed; ${cell.inLine === 1 ? 'first' : ordinal(cell.inLine ?? 1)} in line if an offer here falls through.`;
+      return `Queued for Optimized Match. Every open slot here is proposed; ${cell.inLine === 1 ? 'first' : ordinal(cell.inLine ?? 1)} in line if an offer here falls through.`;
     case 'queued':
-      return 'Queued. Every open slot here is proposed to others, and the plan already seats as many patients as it can; ties go to whoever entered the pool first.';
+      return 'Queued for Optimized Match. Every open slot here is proposed to others, and the plan already seats as many patients as it can; ties go to whoever entered the pool first.';
     case 'placed_elsewhere':
-      return `Queued, but proposed or placed for ${board.openingById[pv.decision?.openingId ?? pv.fixedPairing?.openingId ?? '']?.short ?? 'another slot'}.`;
+      return `Queued for Optimized Match, but proposed or placed for ${board.openingById[pv.decision?.openingId ?? pv.fixedPairing?.openingId ?? '']?.short ?? 'another slot'}.`;
     case 'queued_no_slot':
-      return 'Queued; no slot is open here right now.';
+      return 'Queued for Optimized Match; no slot is open here right now.';
     case 'not_eligible':
     case 'none': {
       const c = placeCheck(board, pv.patient.id, ov.opening.id);
       const why = c.ok ? '' : c.reason;
-      return cell.kind === 'not_eligible' ? `Queued, not eligible on the last match. ${why}.` : `${why}.`;
+      return cell.kind === 'not_eligible' ? `Queued for Optimized Match, not eligible on the last match. ${why}.` : `${why}.`;
     }
     case 'dismissed':
       return 'Dismissed by the team at this meeting.';
@@ -154,11 +154,11 @@ export function MatrixView() {
     forOpening && !showAllRows
       ? [
           { key: 'holding', title: 'Holding a slot here', rows: rowsOf(forOpening.holding) },
-          { key: 'proposed', title: 'Proposed here', rows: rowsOf(forOpening.proposed) },
+          { key: 'proposed', title: 'Optimizer proposed patient', rows: rowsOf(forOpening.proposed) },
           { key: 'line', title: 'Next in line', rows: rowsOf(forOpening.nextInLine) },
-          { key: 'queued', title: 'Also queued here', rows: rowsOf(forOpening.queued) },
+          { key: 'queued', title: 'Also queued for Optimized Match', rows: rowsOf(forOpening.queued) },
           { key: 'fits', title: 'Fits, not queued', rows: rowsOf(forOpening.fits) },
-          { key: 'ne', title: 'Queued, not eligible', rows: rowsOf(forOpening.notEligible) },
+          { key: 'ne', title: 'Queued for Optimized Match, not eligible', rows: rowsOf(forOpening.notEligible) },
         ]
       : (() => {
           const by: Record<SectionKey, PatientView[]> = { decide: [], blocked: [], none: [], progress: [], other: [] };
@@ -379,6 +379,14 @@ function CellPopover({ pid, oid, anchor, onClose }: { pid: string; oid: string; 
     buttons.push(
       <Button key="place" size="small" variant="outlined" onClick={run(() => act.tryPlace(pid, oid))}>
         Place by hand…
+      </Button>,
+    );
+  }
+  const fx = pv.fixedPairing;
+  if (fx && fx.openingId === oid) {
+    buttons.push(
+      <Button key="revert" size="small" variant="outlined" color="inherit" onClick={run(() => act.revert(fx))}>
+        Revert…
       </Button>,
     );
   }

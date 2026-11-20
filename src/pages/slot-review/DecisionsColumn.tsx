@@ -3,7 +3,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import type { Step } from '@/domain/types';
-import { alternativesFor, dismissReasonLabel, placeReasonLabel, type Blocked, type Decision } from '@/domain/board';
+import { alternativesFor, dismissReasonLabel, lastUndoableStep, placeReasonLabel, type Blocked, type Decision } from '@/domain/board';
 import { fmtWeekday, fmtWhen } from '@/domain/dates';
 import { findOpening, labelFor, member } from '@/domain/names';
 import { useStore } from '@/state/store';
@@ -81,7 +81,7 @@ export function DecisionsColumn() {
           <DesignNote id="A4" />
         </>
       }
-      sub="Proposed pairings and who is waiting"
+      sub="Optimizer proposed pairings and who is waiting"
       tabs={
         <Segmented
           label="Decisions: tracking or blocked"
@@ -248,6 +248,7 @@ function DecisionCard({ d, narrowed, dense, list }: { d: Decision; narrowed: boo
   const match = pv?.matchById[d.openingId];
   const pr = d.pairing;
   const step = pr ? currentStep(pr) : undefined;
+  const undoable = pr ? lastUndoableStep(pr) : undefined;
   const consentPending = pr?.status === 'accepted' && pr.holdUntil && !pr.steps.find((s) => s.kind === 'consent_call')?.doneAt;
 
   return (
@@ -263,7 +264,7 @@ function DecisionCard({ d, narrowed, dense, list }: { d: Decision; narrowed: boo
         </Row>
         <Box sx={[{ fontSize: 12.5 }, dense ? { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } : {}]}>
           → <b>{labelFor(state.trials, d.openingId, !dense)}</b>
-          {pv && !pv.patient.queue.some((e) => e.openingId === d.openingId) ? <Muted size={12.5}> · not on their queue</Muted> : null}
+          {pv && !pv.patient.queue.some((e) => e.openingId === d.openingId) ? <Muted size={12.5}> · not queued for Optimized Match</Muted> : null}
           {d.kind === 'proposed' && !dense ? <DesignNote id="A5" /> : null}
         </Box>
         {d.kind === 'proposed' && !dense ? <WhyThisSlot d={d} /> : null}
@@ -302,7 +303,7 @@ function DecisionCard({ d, narrowed, dense, list }: { d: Decision; narrowed: boo
               <Muted>All steps done</Muted>
             )}
             {consentPending ? <Muted size={12}>Slot held until {fmtWeekday(pr.holdUntil!)} for consent</Muted> : null}
-            <Box>
+            <Row sx={{ justifyContent: 'space-between' }}>
               <Button
                 size="small"
                 onClick={() => setOpen((x) => !x)}
@@ -312,7 +313,13 @@ function DecisionCard({ d, narrowed, dense, list }: { d: Decision; narrowed: boo
               >
                 {open ? 'Hide steps and trail' : 'Steps and trail'}
               </Button>
-            </Box>
+              <Row>
+                {!dense ? <DesignNote id="SR10" /> : null}
+                <Button size="small" color="inherit" onClick={() => act.revert(pr)} sx={{ px: 0.5, minWidth: 0 }}>
+                  Revert…
+                </Button>
+              </Row>
+            </Row>
             <Collapse in={open} unmountOnExit>
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, pt: 0.5 }}>
                 <Box component="ol" sx={{ listStyle: 'none', m: 0, p: 0, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
@@ -327,6 +334,20 @@ function DecisionCard({ d, narrowed, dense, list }: { d: Decision; narrowed: boo
                           <Row>
                             {s.assignee ? <PersonTag userId={s.assignee} size={18} /> : s.auto ? null : <Muted size={12}>unassigned</Muted>}
                             {done ? <Muted size={12}>done {fmtWhen(s.doneAt!)}{s.doneBy && s.doneBy !== s.assignee ? ` by ${member(s.doneBy).short}` : ''}</Muted> : <DueText step={s} />}
+                            {s.id === undoable?.id ? (
+                              <Button
+                                size="small"
+                                color="inherit"
+                                onClick={() => {
+                                  actions.undoStep(pr.id, s.id);
+                                  toast(`${s.label}: marked not done.`);
+                                }}
+                                aria-label={`Undo ${s.label.toLowerCase()}`}
+                                sx={{ px: 0.5, py: 0, minWidth: 0, minHeight: 0, fontSize: 12 }}
+                              >
+                                Undo
+                              </Button>
+                            ) : null}
                           </Row>
                         </Box>
                       </Box>
@@ -340,7 +361,7 @@ function DecisionCard({ d, narrowed, dense, list }: { d: Decision; narrowed: boo
                       variant={step.assignee === me.id ? 'contained' : 'outlined'}
                       onClick={() => {
                         actions.completeStep(pr.id, step.id);
-                        toast(`${step.label}: marked done.`);
+                        toast(`${step.label}: marked done.`, { actionLabel: 'Undo', onAction: () => actions.undoStep(pr.id, step.id) });
                       }}
                     >
                       Mark {step.label.toLowerCase()} done
@@ -455,7 +476,7 @@ function BlockedCard({ b, narrowed, dense, list }: { b: Blocked; narrowed: boole
         <Box sx={[{ fontSize: 12.5, lineHeight: 1.5 }, dense ? clampSx(2) : {}]} title={dense ? b.detail : undefined}>
           {b.detail}
         </Box>
-        {b.aheadIds?.length && !dense ? <Muted size={12}>Proposed there: {b.aheadIds.map(ui.nameOf).join('; ')}</Muted> : null}
+        {b.aheadIds?.length && !dense ? <Muted size={12}>Optimizer proposed patient{b.aheadIds.length === 1 ? '' : 's'}: {b.aheadIds.map(ui.nameOf).join('; ')}</Muted> : null}
         {b.hintOpeningIds.map((oid) => (
           <Row key={oid} sx={{ fontSize: 12.5 }}>
             <Box component="span">

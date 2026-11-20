@@ -638,16 +638,59 @@ export function simulatePlace(
       { id: 'sim', patientId, openingId, status: 'accepted', decidedAt: at, decidedBy: me, steps: [], trail: [], placedByHand: { reason: 'other' } },
     ],
   });
+  const mine = board.proposals.find((x) => x.patientId === patientId)?.openingId;
+  return { released: mine && mine !== openingId ? mine : undefined, changes: proposalChanges(state.patients, board, sim, patientId) };
+}
+
+/** Every patient but one whose proposal differs between two plans, and why they have none now. */
+function proposalChanges(patients: Patient[], board: Board, sim: Board, skipId: string): PlaceChange[] {
   const before = Object.fromEntries(board.proposals.map((x) => [x.patientId, x.openingId]));
   const after = Object.fromEntries(sim.proposals.map((x) => [x.patientId, x.openingId]));
   const changes: PlaceChange[] = [];
-  for (const p of state.patients) {
-    if (p.id === patientId || before[p.id] === after[p.id]) continue;
+  for (const p of patients) {
+    if (p.id === skipId || before[p.id] === after[p.id]) continue;
     const b = after[p.id] ? undefined : sim.patientById[p.id]?.blocked;
     changes.push({ patientId: p.id, from: before[p.id], to: after[p.id], blockedLabel: b?.label, blockedReason: b?.reason });
   }
-  const mine = before[patientId];
-  return { released: mine && mine !== openingId ? mine : undefined, changes };
+  return changes;
+}
+
+// ── Revert an accepted slot ─────────────────────────────────────────────
+
+/** The step Undo applies to: the latest one marked done by hand. Steps complete in order, so it is the last done. */
+export function lastUndoableStep(pr: Pairing): Step | undefined {
+  return [...pr.steps].reverse().find((s) => s.doneAt && !s.auto && s.kind !== 'accepted');
+}
+
+/** reopen: back to the optimizer, which may propose the same slot again; dismiss: released and kept out */
+export type RevertOutcome = 'reopen' | 'dismiss';
+
+/**
+ * Re-plans the board as if an accepted, placed or pre-screening pairing were reverted: where the
+ * patient lands (proposed somewhere, or blocked) and whose proposal changes now the slot is free.
+ */
+export function simulateRevert(
+  state: Pick<DemoState, 'patients' | 'trials' | 'pairings'>,
+  board: Board,
+  pairing: Pairing,
+  outcome: RevertOutcome,
+): { own: PlaceChange; changes: PlaceChange[] } {
+  const { patientId, openingId } = pairing;
+  const rest = state.pairings.filter((x) => x.id !== pairing.id);
+  const sim = computeBoard({
+    patients: state.patients,
+    trials: state.trials,
+    pairings:
+      outcome === 'dismiss'
+        ? [...rest, { id: 'sim', patientId, openingId, status: 'dismissed', decidedAt: pairing.decidedAt, decidedBy: pairing.decidedBy, steps: [], trail: [] }]
+        : rest,
+  });
+  const to = sim.proposals.find((x) => x.patientId === patientId)?.openingId;
+  const b = to ? undefined : sim.patientById[patientId]?.blocked;
+  return {
+    own: { patientId, to, blockedLabel: b?.label, blockedReason: b?.reason },
+    changes: proposalChanges(state.patients, board, sim, patientId),
+  };
 }
 
 export interface Alternative {

@@ -1,12 +1,12 @@
 import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { DismissReason, Pairing, PlaceReason, Step, UserId } from '@/domain/types';
-import { computeBoard, placeCheck, simulatePlace } from '@/domain/board';
+import { computeBoard, placeCheck, simulatePlace, simulateRevert, type RevertOutcome } from '@/domain/board';
 import { fmtWeekday } from '@/domain/dates';
 import { labelFor, member } from '@/domain/names';
 import { useStore, type AcceptPlan } from '@/state/store';
 import { useToast } from '@/components/Toast';
 import { useBoardUi } from './boardUi';
-import { AcceptDialog, DismissDialog, HandOffDialog, PlaceDialog, placeChangeLines } from './dialogs';
+import { AcceptDialog, DismissDialog, HandOffDialog, PlaceDialog, placeChangeLines, RevertDialog } from './dialogs';
 
 // The board's decisions, opened from anywhere on it: a decision card, a matrix cell, a drop
 // onto a slot, or the "Place here" button. One set of dialogs, one set of toasts with Undo.
@@ -17,6 +17,8 @@ interface BoardActionsApi {
   accept(t: Target): void;
   dismiss(t: Target): void;
   handOff(pairing: Pairing, step: Step): void;
+  /** After Accept or a placement: release the slot, back to the optimizer or dismissed (SR10). */
+  revert(pairing: Pairing): void;
   /** A drop or "Place here": Accept when the optimizer proposed this pairing, Place by hand otherwise, or say why not. */
   tryPlace(patientId: string, openingId: string): void;
 }
@@ -39,6 +41,7 @@ export function BoardActionsProvider({ children }: { children: ReactNode }) {
   const [placing, setPlacing] = useState<{ patientId: string; openingId: string } | null>(null);
   const [dismissing, setDismissing] = useState<Target | null>(null);
   const [handing, setHanding] = useState<{ pairing: Pairing; step: Step } | null>(null);
+  const [reverting, setReverting] = useState<Pairing | null>(null);
 
   const undoLatest = (patientId: string, openingId: string, status: Pairing['status']) => () => {
     const pr = latest.current.state.pairings.find((x) => x.patientId === patientId && x.openingId === openingId && x.status === status);
@@ -50,6 +53,7 @@ export function BoardActionsProvider({ children }: { children: ReactNode }) {
       accept: setAccepting,
       dismiss: setDismissing,
       handOff: (pairing, step) => setHanding({ pairing, step }),
+      revert: setReverting,
       tryPlace: (patientId, openingId) => {
         const c = placeCheck(latest.current.board, patientId, openingId);
         if (!c.ok) toast(`${latest.current.ui.nameOf(patientId)} → ${latest.current.board.openingById[openingId]?.short ?? 'this slot'}: ${c.reason}.`);
@@ -107,6 +111,23 @@ export function BoardActionsProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  const confirmRevert = (outcome: RevertOutcome, reason: DismissReason | null, note: string) => {
+    if (!reverting) return;
+    const pr = reverting;
+    const sim = simulateRevert(state, board, pr, outcome);
+    actions.revertPairing(pr.id, outcome, reason ?? undefined, note);
+    setReverting(null);
+    const where = labelFor(state.trials, pr.openingId);
+    const taker = sim.changes.find((c) => c.to === pr.openingId);
+    const own = sim.own.to
+      ? `${ui.nameOf(pr.patientId)} is proposed for ${labelFor(state.trials, sim.own.to)}${sim.own.to === pr.openingId ? ' again' : ''}.`
+      : `No one else is waiting for ${where}.`;
+    toast(`Reverted. ${taker ? `${ui.nameOf(taker.patientId)} is proposed for ${where} now.` : own}`, {
+      actionLabel: 'Undo',
+      onAction: () => actions.restorePairing(pr),
+    });
+  };
+
   const confirmHandOff = (to: UserId, due: string, note: string) => {
     if (!handing) return;
     actions.handOff(handing.pairing.id, handing.step.id, to, note, due);
@@ -123,6 +144,7 @@ export function BoardActionsProvider({ children }: { children: ReactNode }) {
         <DismissDialog key={`d-${dismissing.patientId}-${dismissing.openingId}`} target={dismissing} onClose={() => setDismissing(null)} onConfirm={confirmDismiss} />
       ) : null}
       {handing ? <HandOffDialog key={`h-${handing.step.id}`} target={handing} onClose={() => setHanding(null)} onConfirm={confirmHandOff} /> : null}
+      {reverting ? <RevertDialog key={`r-${reverting.id}`} pairing={reverting} onClose={() => setReverting(null)} onConfirm={confirmRevert} /> : null}
     </BoardActionsContext.Provider>
   );
 }

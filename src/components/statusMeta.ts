@@ -11,11 +11,12 @@ export const BOARD_STATUS: Record<BoardStatus, { label: string; tone: ToneName }
   pre_screening: { label: 'Pre-screening', tone: 'purple' },
   slot_accepted: { label: 'Slot accepted', tone: 'green' },
   no_possible: { label: 'No possible slots', tone: 'red' },
-  not_queued: { label: 'Nothing queued', tone: 'grey' },
+  not_queued: { label: 'Nothing queued for Optimized Match', tone: 'grey' },
 };
 
+// A decision is about the patient's slot; a candidate is a patient listed under a slot.
 export const DECISION: Record<DecisionKind, { label: string; tone: ToneName }> = {
-  proposed: { label: 'Proposed', tone: 'blue' },
+  proposed: { label: 'Optimizer proposed slot', tone: 'blue' },
   accepted: { label: 'Accepted', tone: 'green' },
   pre_screening: { label: 'Pre-screening', tone: 'purple' },
   dismissed: { label: 'Dismissed', tone: 'grey' },
@@ -24,10 +25,10 @@ export const DECISION: Record<DecisionKind, { label: string; tone: ToneName }> =
 export const CANDIDATE: Record<CandidateStatus, { label: string; tone: ToneName }> = {
   accepted: { label: 'Accepted', tone: 'green' },
   pre_screening: { label: 'Pre-screening', tone: 'purple' },
-  proposed: { label: 'Proposed', tone: 'blue' },
+  proposed: { label: 'Optimizer proposed patient', tone: 'blue' },
   next_in_line: { label: 'Next in line', tone: 'amber' },
   placed_elsewhere: { label: 'Placed elsewhere', tone: 'grey' },
-  queued: { label: 'Queued', tone: 'grey' },
+  queued: { label: 'Queued for Optimized Match', tone: 'grey' },
   dismissed: { label: 'Dismissed', tone: 'grey' },
   not_eligible: { label: 'Not eligible', tone: 'red' },
 };
